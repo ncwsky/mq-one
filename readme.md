@@ -3,5 +3,5 @@
 sqlite.db sqlite数据库模板
 mysql.sql mysql数据库初始sql
 
-安装
-composer require myphps/mq-one
+###安装
+    composer require myphps/mq-one
