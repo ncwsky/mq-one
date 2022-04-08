@@ -7,6 +7,6 @@
     "minimum-stability": "dev",
     "require": {
         "php": ">=7.0",
-        "myphps/my-php-srv": "^1.0"
+        "myphps/my-php-srv": "^2.0"
     }
 }
