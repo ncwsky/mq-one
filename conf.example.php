@@ -13,17 +13,12 @@ $cfg = array(
         'name' => __DIR__.'/mq.db',
     ],
     'redis' => array(
-        //'name' => 'redis',
         'host' => '192.168.0.246',
         'port' => 6379,
         'password' => '123456',
         'select' => 6, //选择库
         'pconnect'=>true, //长连接
     ),
-    'debug' => true,
-    'root_dir' => '',
-    'url_para_str' => '/',
-    'http_ip' => ['127.0.0.1','192.168.0.219'], //http ip白名单
     'log_dir' => __DIR__ . '/log/', //日志记录主目录名称
     'log_size' => 4194304,// 日志文件大小限制
     'log_level' => 1,// 日志记录等级
