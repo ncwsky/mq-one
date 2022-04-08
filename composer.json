@@ -1,0 +1,12 @@
+{
+    "name": "myphps/mq-one",
+    "description": "消息队列服务",
+    "license": "MIT",
+    "keywords": ["mq"],
+    "homepage": "https://github.com/myphps/mq-one",
+    "minimum-stability": "dev",
+    "require": {
+        "php": ">=7.0",
+        "myphps/my-php-srv": "^1.0"
+    }
+}
