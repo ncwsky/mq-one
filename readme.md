@@ -11,8 +11,8 @@ mysql.sql mysql数据库初始sql
     cp vendor/myphps/mq-one/run.example.php run.php
     cp vendor/myphps/mq-one/conf.example.php conf.php
     cp vendor/myphps/mq-one/sqlite.db mq.db
+    chmod +x run.php
     
     修改 run.php conf.php配置
-    
-    运行 run.php 
+    运行 ./run.php 
     
