@@ -5,12 +5,12 @@ error_reporting(E_ALL);
 ini_set('display_errors', 'On');// 有些环境关闭了错误显示
 defined('RUN_DIR') || define('RUN_DIR', __DIR__);
 if (!defined('VENDOR_DIR')) {
-    if (is_dir(RUN_DIR . '/vendor')) {
-        define('VENDOR_DIR', RUN_DIR . '/vendor');
-    } elseif (is_dir(RUN_DIR . '/../vendor')) {
-        define('VENDOR_DIR', RUN_DIR . '/../vendor');
-    } elseif (is_dir(RUN_DIR . '/../../../vendor')) {
-        define('VENDOR_DIR', RUN_DIR . '/../../../vendor');
+    if (is_dir(__DIR__ . '/vendor')) {
+        define('VENDOR_DIR', __DIR__ . '/vendor');
+    } elseif (is_dir(__DIR__ . '/../vendor')) {
+        define('VENDOR_DIR', __DIR__ . '/../vendor');
+    } elseif (is_dir(__DIR__ . '/../../../vendor')) {
+        define('VENDOR_DIR', __DIR__ . '/../../../vendor');
     }
 }
 
@@ -25,7 +25,7 @@ defined('IS_SWOOLE') || define('IS_SWOOLE', 0);
 
 require VENDOR_DIR . '/autoload.php';
 require MY_PHP_DIR . '/GetOpt.php';
-if (defined('MY_PHP_SRV_DIR')) require MY_PHP_SRV_DIR . '/Load.php';
+defined('MY_PHP_SRV_DIR') && require MY_PHP_SRV_DIR . '/Load.php';
 
 //解析命令参数
 GetOpt::parse('sp:l:', ['help', 'swoole', 'port:', 'listen:']);
@@ -52,7 +52,7 @@ if(!is_file(CONF_FILE)){
     echo CONF_FILE.' file does not exist';
     exit(0);
 }
-// $_SERVER['SCRIPT_FILENAME'] = __FILE__; //重置运行 不设置此项使用相对路径运行时 会加载了不相应的引入文件
+__DIR__ == RUN_DIR && $_SERVER['SCRIPT_FILENAME'] = __FILE__; //重置运行 不设置此项使用相对路径运行时 会加载了不相应的引入文件
 
 $conf = [
     'name' => MQ_NAME, //服务名
