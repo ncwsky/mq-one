@@ -2,18 +2,18 @@
 $cfg = array(
     'db2' => [
         'dbms' => 'mysql', //数据库
-        'server' => '192.168.0.219',//数据库主机
+        'server' => '127.0.0.1',//数据库主机
         'name' => 'mq',    //数据库名称
         'user' => 'root',    //数据库用户
         'pwd' => '123456',    //数据库密码
         'port' => 3306,     // 端口
     ],
-    'db' => [
+    'db' => [ //默认使用sqlite
         'dbms' => 'sqlite', //数据库
         'name' => __DIR__.'/mq.db',
     ],
     'redis' => array(
-        'host' => '192.168.0.246',
+        'host' => '127.0.0.1',
         'port' => 6379,
         'password' => '123456',
         'select' => 6, //选择库
