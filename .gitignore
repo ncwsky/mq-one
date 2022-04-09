@@ -8,3 +8,4 @@ runLock
 *.db
 /conf.php
 /composer.lock
+/run.php
