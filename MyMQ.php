@@ -3,6 +3,11 @@
 //declare(strict_types=1);
 error_reporting(E_ALL);
 ini_set('display_errors', 'On');// 有些环境关闭了错误显示
+
+if (realpath(dirname($_SERVER['SCRIPT_FILENAME'])) != __DIR__ && !defined('RUN_DIR')) {
+    $_SERVER['SCRIPT_FILENAME'] = __FILE__; //重置运行 不设置此项使用相对路径运行时 会加载了不相应的引入文件
+}
+
 defined('RUN_DIR') || define('RUN_DIR', __DIR__);
 if (!defined('VENDOR_DIR')) {
     if (is_dir(__DIR__ . '/vendor')) {
@@ -52,7 +57,6 @@ if(!is_file(CONF_FILE)){
     echo CONF_FILE.' file does not exist';
     exit(0);
 }
-__DIR__ == RUN_DIR && $_SERVER['SCRIPT_FILENAME'] = __FILE__; //重置运行 不设置此项使用相对路径运行时 会加载了不相应的引入文件
 
 $conf = [
     'name' => MQ_NAME, //服务名
