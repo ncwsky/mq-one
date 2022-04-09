@@ -9,3 +9,4 @@ runLock
 /conf.php
 /composer.lock
 /run.php
+/demo

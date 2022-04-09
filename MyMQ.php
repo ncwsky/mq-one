@@ -3,19 +3,21 @@
 //declare(strict_types=1);
 error_reporting(E_ALL);
 ini_set('display_errors', 'On');// 有些环境关闭了错误显示
+defined('RUN_DIR') || define('RUN_DIR', __DIR__);
 if (!defined('VENDOR_DIR')) {
-    if (is_dir(__DIR__ . '/vendor')) {
-        define('VENDOR_DIR', __DIR__ . '/vendor');
-    } elseif (is_dir(__DIR__ . '/../vendor')) {
-        define('VENDOR_DIR', __DIR__ . '/../vendor');
-    } elseif (is_dir(__DIR__ . '/../../../vendor')) {
-        define('VENDOR_DIR', __DIR__ . '/../../../vendor');
+    if (is_dir(RUN_DIR . '/vendor')) {
+        define('VENDOR_DIR', RUN_DIR . '/vendor');
+    } elseif (is_dir(RUN_DIR . '/../vendor')) {
+        define('VENDOR_DIR', RUN_DIR . '/../vendor');
+    } elseif (is_dir(RUN_DIR . '/../../../vendor')) {
+        define('VENDOR_DIR', RUN_DIR . '/../../../vendor');
     }
 }
+
 defined('MY_PHP_DIR') || define('MY_PHP_DIR', VENDOR_DIR . '/myphps/myphp');
 //defined('MY_PHP_SRV_DIR') || define('MY_PHP_SRV_DIR', VENDOR_DIR . '/myphps/my-php-srv');
 
-defined('CONF_FILE') || define('CONF_FILE', __DIR__ . '/conf.php');
+defined('CONF_FILE') || define('CONF_FILE', RUN_DIR . '/conf.php');
 defined('MQ_NAME') || define('MQ_NAME', 'MyMQ');
 defined('MQ_LISTEN') || define('MQ_LISTEN', '0.0.0.0');
 defined('MQ_PORT') || define('MQ_PORT', 55011);
@@ -59,9 +61,9 @@ $conf = [
     'type' => 'tcp', //类型[tcp udp]
     'setting' => [ //swooleSrv有兼容处理
         'protocol' => 'MQPackN2',
-        'stdoutFile' => __DIR__ . '/log.log', //终端输出
-        'pidFile' => __DIR__ . '/mq.pid',  //pid_file
-        'logFile' => __DIR__ . '/log.log', //日志文件 log_file
+        'stdoutFile' => RUN_DIR . '/log.log', //终端输出
+        'pidFile' => RUN_DIR . '/mq.pid',  //pid_file
+        'logFile' => RUN_DIR . '/log.log', //日志文件 log_file
         'log_level' => 0,
         //swoole
         /*'open_eof_check' => true, //打开EOF检测
@@ -113,6 +115,12 @@ $conf = [
     'worker_load' => [
         CONF_FILE,
         MY_PHP_DIR . '/base.php',
+        function () {
+            if(__DIR__ != RUN_DIR){
+                myphp::class_dir(__DIR__ . '/common');
+                require __DIR__ . '/common/common.php';	//引入公共函数
+            }
+        }
     ],
 ];
 
