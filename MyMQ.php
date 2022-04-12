@@ -1,11 +1,11 @@
 #!/usr/bin/env php
 <?php
-//declare(strict_types=1);
 error_reporting(E_ALL);
 ini_set('display_errors', 'On');// 有些环境关闭了错误显示
 
 if (realpath(dirname($_SERVER['SCRIPT_FILENAME'])) != __DIR__ && !defined('RUN_DIR')) {
-    $_SERVER['SCRIPT_FILENAME'] = __FILE__; //重置运行 不设置此项使用相对路径运行时 会加载了不相应的引入文件
+    define('RUN_DIR', realpath(dirname($_SERVER['SCRIPT_FILENAME'])));
+    //$_SERVER['SCRIPT_FILENAME'] = __FILE__; //重置运行 不设置此项使用相对路径运行时 会加载了不相应的引入文件
 }
 
 defined('RUN_DIR') || define('RUN_DIR', __DIR__);
@@ -22,7 +22,6 @@ if (!defined('VENDOR_DIR')) {
 defined('MY_PHP_DIR') || define('MY_PHP_DIR', VENDOR_DIR . '/myphps/myphp');
 //defined('MY_PHP_SRV_DIR') || define('MY_PHP_SRV_DIR', VENDOR_DIR . '/myphps/my-php-srv');
 
-defined('CONF_FILE') || define('CONF_FILE', RUN_DIR . '/conf.php');
 defined('MQ_NAME') || define('MQ_NAME', 'MyMQ');
 defined('MQ_LISTEN') || define('MQ_LISTEN', '0.0.0.0');
 defined('MQ_PORT') || define('MQ_PORT', 55011);
@@ -53,8 +52,8 @@ if (GetOpt::has('h', 'help')) {
    -s --swoole    swolle运行', PHP_EOL;
     exit(0);
 }
-if(!is_file(CONF_FILE)){
-    echo CONF_FILE.' file does not exist';
+if(!is_file(RUN_DIR . '/conf.php')){
+    echo RUN_DIR . '/conf.php does not exist';
     exit(0);
 }
 
@@ -117,12 +116,11 @@ $conf = [
     ],
     // 进程内加载的文件
     'worker_load' => [
-        CONF_FILE,
+        RUN_DIR . '/conf.php',
         MY_PHP_DIR . '/base.php',
         function () {
             if(__DIR__ != RUN_DIR){
                 myphp::class_dir(__DIR__ . '/common');
-                require __DIR__ . '/common/common.php';	//引入公共函数
             }
         }
     ],
