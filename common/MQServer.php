@@ -67,6 +67,12 @@ class MQServer
     protected static $delay;
 
     /**
+     *  DelayInterface Class
+     * @var string
+     */
+    public static $delayClass = '';
+
+    /**
      * 每秒实时实时出列数量
      * @var int
      */
@@ -152,13 +158,17 @@ class MQServer
     {
         ini_set('memory_limit', '512M');
         MQLib::initConf();
+        static::$delayClass = GetC('delay_class', 'DelayPHP');
+        if (empty(static::$delayClass) || !class_exists(static::$delayClass)) {
+            static::$delayClass = 'DelayPHP';
+        }
         static::$queueStep = MQLib::queueStep();
         $time = time();
         $stepTime = floor($time / static::$queueStep) * static::$queueStep;
         $nextStepTime = $stepTime + static::$queueStep;
         static::$next2StepTime = $nextStepTime + static::$queueStep;
         static::$nextClearFlag = date('ymd') . (string)GetC('data_clear_on_hour', 10);
-        static::$delay = new DelayPHP();
+        static::$delay = new static::$delayClass();
 
         // 清除redis延迟缓存
         static::$delay->clear();
@@ -167,49 +177,16 @@ class MQServer
         // 清除redis重试缓存
         redis()->del(MQLib::$prefix . MQLib::QUEUE_RETRY_LIST, MQLib::$prefix . MQLib::QUEUE_RETRY_HASH);
         */
-        //内部通信client
-        if (SrvBase::$instance->isWorkerMan) {
-            $srvConn = new AsyncTcpConnection("tcp://127.0.0.1:" . SrvBase::$instance->port);
-            $srvConn->protocol = 'MQPackN2';
-            $srvConn->onConnect = function (AsyncTcpConnection $con) {
-                MQLib::$authKey && $con->send('#' . MQLib::$authKey);
-            };
-            $srvConn->onMessage = function (AsyncTcpConnection $con, $data) {
-                if(SrvBase::$isConsole) SrvBase::safeEcho($data . PHP_EOL);
-            };
-            $srvConn->onClose = function (AsyncTcpConnection $con) {
-                // 如果连接断开，则在1秒后重连
-                $con->reConnect(1);
-            };
-            $srvConn->connect();
-        } else {
-            $srvConn = TcpClient::instance();
-            TcpClient::$onLog = function ($msg) {
-                Log::write($msg);
-            };
-            $srvConn->config("127.0.0.1:" . SrvBase::$instance->port);
-            $srvConn->onConnect = function(TcpClient $con){
-                MQLib::$authKey && $con->send('#' . MQLib::$authKey);
-            };
-            $srvConn->onInput = ['MQPackN2', 'input'];
-            $srvConn->onEncode = ['MQPackN2', 'encode'];
-            $srvConn->onDecode = ['MQPackN2', 'decode'];
-        }
 
         // 实时统计
-        $worker->tick(1000, function () use ($worker_id) {
+        $worker->tick(1000, function () {
             redis()->multi(MyRedis::PIPELINE);
-            redis()->setex(MQLib::$prefix . MQLib::REAL_RECV_NUM . $worker_id, 30, static::$realRecvNum);
-            redis()->setex(MQLib::$prefix . MQLib::REAL_POP_NUM . $worker_id, 30, static::$realPopNum);
-            redis()->setex(MQLib::$prefix . MQLib::REAL_PUSH_NUM . $worker_id, 30, static::$realPushNum);
-            //redis()->setex(MQLib::$prefix . MQLib::REAL_QUEUE_COUNT . $worker_id, 30, static::$queueCount);
-            //redis()->setex(MQLib::$prefix . MQLib::REAL_HANDLE_COUNT . $worker_id, 30, static::$handleCount);
-
+            redis()->setex(MQLib::$prefix . MQLib::REAL_RECV_NUM, 30, static::$realRecvNum);
+            redis()->setex(MQLib::$prefix . MQLib::REAL_POP_NUM, 30, static::$realPopNum);
+            redis()->setex(MQLib::$prefix . MQLib::REAL_PUSH_NUM, 30, static::$realPushNum);
             redis()->incrby(MQLib::$prefix . MQLib::REAL_QUEUE_COUNT, static::$queueCount);
             redis()->incrby(MQLib::$prefix . MQLib::REAL_HANDLE_COUNT, static::$handleCount);
             redis()->incrby(MQLib::$prefix . MQLib::REAL_DELAY_COUNT, static::$delayCount);
-            //redis()->incrby(MQLib::$prefix . 'total_' . MQLib::REAL_QUEUE_COUNT, static::$queueCount);
-            //redis()->incrby(MQLib::$prefix . 'total_' . MQLib::REAL_HANDLE_COUNT, static::$handleCount);
 
             static::$queueCount = 0;
             static::$handleCount = 0;
@@ -218,14 +195,14 @@ class MQServer
             static::$realPushNum = 0;
             static::$realRecvNum = 0;
             foreach (static::$queueData as $topic => $queue) {
-                redis()->setex(MQLib::$prefix . MQLib::REAL_TOPIC_NUM . $worker_id . ':' . $topic, 30, $queue->count());
+                redis()->setex(MQLib::$prefix . MQLib::REAL_TOPIC_NUM . ':' . $topic, 30, $queue->count());
             }
             redis()->exec();
         });
 
         // 延迟入列|重试入列|更新mq最后使用id数据|更新队列数据的状态
-        $worker->tick(1000, function () use($srvConn) {
-            static::$delayCount -= static::$delay->tick($srvConn);
+        $worker->tick(1000, function () {
+            static::$delayCount -= static::$delay->tick();
 
             //重试入列
             $now = time();
@@ -253,7 +230,7 @@ class MQServer
                     static::retryClean($id, true); #清除
                     list($retry, $retry_step) = explode('-', $retry, 2);
                     static::queueUpdate($queueName, $id, ['retry_count'=>(int)$retry_step]);
-                    $srvConn->send(toJson($push));
+                    static::push($push);
                 }
             }
 
@@ -516,7 +493,7 @@ class MQServer
         return $ret;
     }
 
-    protected static function push($data){
+    public static function push($data){
         static::$realPushNum++;
         if (empty($data['topic']) || empty($data['data'])) {
             return [0, 'topic or data is empty'];
@@ -703,27 +680,13 @@ class MQServer
             'handle_count' => (int)redis()->get(MQLib::$prefix . MQLib::REAL_HANDLE_COUNT),
             'retry_count' => (int)redis()->zcard(MQLib::$prefix . MQLib::QUEUE_RETRY_LIST),
             'delay_count' => (int)redis()->get(MQLib::$prefix . MQLib::REAL_DELAY_COUNT),
-            'real_recv_num' => 0,
-            'real_pop_num' => 0,
-            'real_push_num' => 0,
+            'real_recv_num' => (int)redis()->get(MQLib::$prefix . MQLib::REAL_RECV_NUM),
+            'real_pop_num' => (int)redis()->get(MQLib::$prefix . MQLib::REAL_POP_NUM),
+            'real_push_num' => (int)redis()->get(MQLib::$prefix . MQLib::REAL_PUSH_NUM),
             'waiting_num' => 0,
             'topic_count' => 0,
             'topic_list' => [],
         ];
-        $redisList = (array)redis()->keys(MQLib::$prefix . MQLib::REAL_RECV_NUM . '*');
-        foreach ($redisList as $key) {
-            $stats['real_recv_num'] += (int)redis()->get($key);
-        }
-
-        $redisList = (array)redis()->keys(MQLib::$prefix . MQLib::REAL_POP_NUM . '*');
-        foreach ($redisList as $key) {
-            $stats['real_pop_num'] += (int)redis()->get($key);
-        }
-
-        $redisList = (array)redis()->keys(MQLib::$prefix . MQLib::REAL_PUSH_NUM . '*');
-        foreach ($redisList as $key) {
-            $stats['real_push_num'] += (int)redis()->get($key);
-        }
 
         //待处理数量
         $topicNumList = (array)redis()->keys(MQLib::$prefix . MQLib::REAL_TOPIC_NUM . '*');

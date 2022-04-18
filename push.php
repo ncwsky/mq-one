@@ -56,7 +56,7 @@ $rawData = MQPackN2::toEncode('topic=cmd&data='.$data);
 //file_put_contents(__DIR__.'/tcp', $rawData);
 
 $client = TcpClient::instance();
-$client->config('192.168.0.245:55011');
+$client->config('127.0.0.1:55011');
 $client->onDecode = function ($buffer) {
     $buffer = rtrim($buffer, "\n");
     return substr($buffer, 6);

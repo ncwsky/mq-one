@@ -23,15 +23,16 @@ $cfg = array(
     'log_size' => 4194304,// 日志文件大小限制
     'log_level' => 1,// 日志记录等级
     // ----- message queue start -----
-    'auth_key'=>'', // tcp认证key
+    'auth_key' => '', // tcp认证key
     'allow_ip' => '', // 允许ip 优先于auth_key
     'queue_prefix' => '', // 前缀
     'data_expired_day' => 1, //数据过期天数
     'data_clear_on_hour' => 12, // 数据每日几时（0-23）清理
-    'queue_step'=> 60, //队列存储间隔 分钟
+    'queue_step' => 60, //队列存储间隔 分钟
     'retry_step' => [ // topic=>[重试间隔值,...] 未配置使用全局值
         //'cmd' => [10, 30, 60, 90, 120, 180],
     ],
+    'delay_class' => '',
     // ----- message queue end -----
 );
 /**

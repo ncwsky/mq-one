@@ -8,7 +8,7 @@ class DelayPHP implements DelayInterface
      */
     protected static $delayData = [];
 
-    public function tick($srvConn)
+    public function tick()
     {
         //延迟入列
         $now = time();
@@ -31,7 +31,7 @@ class DelayPHP implements DelayInterface
                     'retry' => $retry,
                     'data' => $data
                 ];
-                $srvConn->send(toJson($push));
+                MQServer::push($push);
             }
         }
         return $count;

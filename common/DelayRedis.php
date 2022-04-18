@@ -12,7 +12,7 @@ class DelayRedis implements DelayInterface
         $this->redis = redis();
     }
 
-    public function tick($srvConn)
+    public function tick()
     {
         //延迟入列
         $now = time();
@@ -35,7 +35,7 @@ class DelayRedis implements DelayInterface
                         'retry' => $retry,
                         'data' => $data
                     ];
-                    $srvConn->send(toJson($push));
+                    MQServer::push($push);
                 }
                 $this->redis->zremrangebyscore($delayed, '-inf', $now);
             }

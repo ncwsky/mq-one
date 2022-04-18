@@ -4,10 +4,9 @@ interface DelayInterface
 {
     /**
      * 定时延时入列数据
-     * @param TcpClient|\Workerman\Connection\AsyncTcpConnection $srvConn
      * @return int 入列数
      */
-    public function tick($srvConn);
+    public function tick();
 
     public function beforeAdd();
 

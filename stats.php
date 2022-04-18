@@ -5,7 +5,7 @@ declare(strict_types=1);
 require __DIR__ . '/conf.php';
 require __DIR__ . '/../myphp/base.php';
 
-$client = TcpClient::instance('', '192.168.0.245:55011');
+$client = TcpClient::instance('', '127.0.0.1:55011');
 //$client->type = 'udp';
 $client->onDecode = function ($buffer) {
     $buffer = rtrim($buffer, "\n");
