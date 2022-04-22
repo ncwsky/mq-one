@@ -173,11 +173,6 @@ class MQServer
         // 清除redis延迟缓存
         static::$delay->clear();
 
-        /*
-        // 清除redis重试缓存
-        redis()->del(MQLib::$prefix . MQLib::QUEUE_RETRY_LIST, MQLib::$prefix . MQLib::QUEUE_RETRY_HASH);
-        */
-
         // 实时统计
         $worker->tick(1000, function () {
             redis()->multi(MyRedis::PIPELINE);
