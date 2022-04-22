@@ -71,7 +71,7 @@ class TcpClient
      * 到服务端的socket连接
      * @var resource
      */
-    protected $socket = null;
+    public $socket = null;
 
     /**
      * 实例的服务名
@@ -134,6 +134,8 @@ class TcpClient
      * @var callable
      */
     public $onConnect = null;
+
+    public $onClose = null;
 
     //支付以下长度值
     public static $packageLenTypeSizeMap = [
@@ -313,6 +315,7 @@ class TcpClient
         }
         restore_error_handler();
         if (!$this->socket || !is_resource($this->socket)) {
+            $this->toOnClose();
             throw new \Exception("can not connect to $address , $err_no:$err_msg");
         }
 
@@ -336,6 +339,7 @@ class TcpClient
                 socket_set_option($raw_socket, SOL_TCP, TCP_NODELAY, 1);
                 restore_error_handler();
             } else {
+                $this->toOnClose();
                 throw new \Exception("can not connect to $address");
             }
             stream_set_blocking($this->socket, false);
@@ -374,12 +378,24 @@ class TcpClient
      */
     protected function close()
     {
+        $this->toOnClose();
         if ($this->socket) {
             fclose($this->socket);
             $this->socket = null;
             $this->currentPackageLength = 0;
             $this->recvBuffer = '';
             $this->isConnect = false;
+        }
+    }
+    protected function toOnClose(){
+        if ($this->onClose) {
+            try {
+                \call_user_func($this->onClose, $this);
+            } catch (\Exception $e) {
+                static::log($e);
+            } catch (\Error $e) {
+                static::log($e);
+            }
         }
     }
 
@@ -448,15 +464,15 @@ class TcpClient
      */
     public function send($data, $raw = false)
     {
-        $this->open();
-        if (!$this->isConnect) return false;
-        if (!$raw) $data = $this->encode($data);
-
-        if ($this->type == 'udp') {
-            return \strlen($data) === \stream_socket_sendto($this->socket, $data);
-        }
-
         try {
+            $this->open();
+            if (!$this->isConnect) return false;
+            if (!$raw) $data = $this->encode($data);
+
+            if ($this->type == 'udp') {
+                return \strlen($data) === \stream_socket_sendto($this->socket, $data);
+            }
+
             //set_error_handler(function(){});
             $written = @fwrite($this->socket, $data);
             //restore_error_handler();
@@ -469,14 +485,16 @@ class TcpClient
             }
         } catch (\Exception $e) {
             if (!is_resource($this->socket) || feof($this->socket)) {
-                $this->close();
+                //$this->close();
             }
+            $this->close();
             static::log($e);
             return false;
         } catch (\Error $e) {
             if (!is_resource($this->socket) || feof($this->socket)) {
-                $this->close();
+                //$this->close();
             }
+            $this->close();
             static::log($e);
             return false;
         }
