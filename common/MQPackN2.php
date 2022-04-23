@@ -13,11 +13,11 @@ class MQPackN2
      */
     public static function input($buffer)
     {
-        $pos = strpos($buffer, "\n");
+/*        $pos = strpos($buffer, "\n");
         if ($pos === false) {
             return 0;
         }
-        return $pos + 1;
+        return $pos + 1;*/
 
         if (strlen($buffer) < 6) {
             return 0;
@@ -43,7 +43,7 @@ class MQPackN2
      */
     public static function encode($buffer)
     {
-        return self::toEncode($buffer) . "\n";
+        //return self::toEncode($buffer) . "\n";
         return self::toEncode($buffer);
     }
 
@@ -55,7 +55,7 @@ class MQPackN2
      */
     public static function decode($buffer)
     {
-        $buffer = rtrim($buffer, "\n");
+        //$buffer = rtrim($buffer, "\n");
         return substr($buffer, 6);
     }
 }

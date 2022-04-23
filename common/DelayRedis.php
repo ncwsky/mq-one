@@ -6,10 +6,20 @@ class DelayRedis implements DelayInterface
      * @var MyRedis|lib_redis
      */
     private $redis;
+    private $count = 0;
+    private $waiting_count = 0;
 
     public function __construct()
     {
         $this->redis = redis();
+    }
+
+    public function getCount(){
+        return $this->count;
+    }
+
+    public function waitingCount(){
+        return $this->waiting_count;
     }
 
     public function tick()
@@ -24,7 +34,10 @@ class DelayRedis implements DelayInterface
             $topic = substr($delayed, $delayedLen);
             $items = $this->redis->zrevrangebyscore($delayed, $now, '-inf');
             if ($items) {
-                $count += count($items);
+                $_count = count($items);
+                $count += $_count;
+                $this->count -= $_count;
+                $this->waiting_count -= $_count;
                 foreach ($items as $package_str) {
                     list($queueName, $id, $ack, $retry, $data) = explode(',', $package_str, 5);
                     $push = [
@@ -50,6 +63,8 @@ class DelayRedis implements DelayInterface
 
     public function add($topic, $time, $queue_str)
     {
+        $this->count++;
+        $this->waiting_count++;
         return $this->redis->zAdd(MQLib::$prefix . MQLib::QUEUE_DELAYED . $topic, $time, $queue_str);
     }
 
@@ -58,6 +73,8 @@ class DelayRedis implements DelayInterface
     }
 
     public function clear(){
+        $this->count = 0;
+        $this->waiting_count = 0;
         $delayedList = (array)redis()->keys(MQLib::$prefix . MQLib::QUEUE_DELAYED . '*');
         $delayedList && redis()->del($delayedList);
     }

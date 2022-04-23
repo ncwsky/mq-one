@@ -7,11 +7,16 @@ require __DIR__ . '/../myphp/base.php';
 
 $client = TcpClient::instance();
 $client->config('127.0.0.1:55011');
+$client->onInput = function ($buffer) {
+    //return MQPackN2::toEncode($buffer) . "\n";
+    return MQPackN2::input($buffer);
+};
 $client->onEncode = function ($buffer) {
-    return MQPackN2::toEncode($buffer) . "\n";
+    //return MQPackN2::toEncode($buffer) . "\n";
+    return MQPackN2::toEncode($buffer);
 };
 $client->onDecode = function ($buffer) {
-    $buffer = rtrim($buffer, "\n");
+    //$buffer = rtrim($buffer, "\n");
     return substr($buffer, 6);
 };
 while (1) {
@@ -30,7 +35,7 @@ while (1) {
             if (strlen($mq)> 32 && substr_count($mq, ',', 0, 32)==3) {
                 list($queueName, $id, $ack, $retry, $data) = explode(',', $mq, 5);
                 $output = [];
-                usleep(mt_rand(100, 1000000)); //模拟处理时间
+                //usleep(mt_rand(100, 1000000)); //模拟处理时间
                 //exec($data . ' 2>&1', $output, $code); //将标准错误输出重定向到标准输出
                 $result = '';//implode(PHP_EOL, $output);
                 echo date("Y-m-d H:i:s") . ' handle: ' . $result, PHP_EOL;

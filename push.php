@@ -57,10 +57,19 @@ $rawData = MQPackN2::toEncode('topic=cmd&data='.$data);
 
 $client = TcpClient::instance();
 $client->config('127.0.0.1:55011');
+$client->onInput = function ($buffer) {
+    //return MQPackN2::toEncode($buffer) . "\n";
+    return MQPackN2::input($buffer);
+};
+$client->onEncode = function ($buffer) {
+    //return MQPackN2::toEncode($buffer) . "\n";
+    return MQPackN2::toEncode($buffer);
+};
 $client->onDecode = function ($buffer) {
-    $buffer = rtrim($buffer, "\n");
+    //$buffer = rtrim($buffer, "\n");
     return substr($buffer, 6);
 };
+
 $count = 0;
 while(1){
     $topic = 'cmd';
@@ -68,7 +77,7 @@ while(1){
     $delay = mt_rand(0, 9) ? 0 : mt_rand(10, 600);
     $retry = mt_rand(0, 5) ? 0 : mt_rand(1, 7);
     $ack = mt_rand(0, 9) ? 0 : 1;
-    $rawData = MQPackN2::toEncode('topic=cmd&data=' . $data . '&delay=' . $delay . '&retry=' . $retry . '&ack=' . $ack);
+    $rawData = 'topic=cmd&data=' . $data . '&delay=' . $delay . '&retry=' . $retry . '&ack=' . $ack;
     try {
         if ($client->send($rawData)) {
             $count++;

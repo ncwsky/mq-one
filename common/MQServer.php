@@ -56,13 +56,7 @@ class MQServer
     protected static $bufferNum = 0;
 
     /**
-     * 延迟数据缓存
-     * @var SplPriorityQueue[]
-     */
-    protected static $delayData = [];
-
-    /**
-     * @var DelayInterface
+     * @var DelayPHP|DelayInterface
      */
     protected static $delay;
 
@@ -71,6 +65,17 @@ class MQServer
      * @var string
      */
     public static $delayClass = '';
+
+    /**
+     * @var RetryRedis|RetryInterface
+     */
+    protected static $retry;
+
+    /**
+     *  RetryInterface Class
+     * @var string
+     */
+    public static $retryClass = '';
 
     /**
      * 每秒实时实时出列数量
@@ -158,10 +163,15 @@ class MQServer
     {
         ini_set('memory_limit', '512M');
         MQLib::initConf();
-        static::$delayClass = GetC('delay_class', 'DelayPHP');
+        static::$delayClass = GetC('delay_class', DelayPHP::class);
         if (empty(static::$delayClass) || !class_exists(static::$delayClass)) {
-            static::$delayClass = 'DelayPHP';
+            static::$delayClass = DelayPHP::class;
         }
+        static::$retryClass = GetC('retry_class', RetryRedis::class);
+        if (empty(static::$retryClass) || !class_exists(static::$retryClass)) {
+            static::$retryClass = RetryRedis::class;
+        }
+
         static::$queueStep = MQLib::queueStep();
         $time = time();
         $stepTime = floor($time / static::$queueStep) * static::$queueStep;
@@ -169,6 +179,7 @@ class MQServer
         static::$next2StepTime = $nextStepTime + static::$queueStep;
         static::$nextClearFlag = date('ymd') . (string)GetC('data_clear_on_hour', 10);
         static::$delay = new static::$delayClass();
+        static::$retry = new static::$retryClass();
 
         // 清除redis延迟缓存
         static::$delay->clear();
@@ -181,11 +192,11 @@ class MQServer
             redis()->setex(MQLib::$prefix . MQLib::REAL_PUSH_NUM, 30, static::$realPushNum);
             redis()->incrby(MQLib::$prefix . MQLib::REAL_QUEUE_COUNT, static::$queueCount);
             redis()->incrby(MQLib::$prefix . MQLib::REAL_HANDLE_COUNT, static::$handleCount);
-            redis()->incrby(MQLib::$prefix . MQLib::REAL_DELAY_COUNT, static::$delayCount);
+            //redis()->incrby(MQLib::$prefix . MQLib::REAL_DELAY_COUNT, static::$delayCount);
 
             static::$queueCount = 0;
             static::$handleCount = 0;
-            static::$delayCount = 0;
+            //static::$delayCount = 0;
             static::$realPopNum = 0;
             static::$realPushNum = 0;
             static::$realRecvNum = 0;
@@ -197,37 +208,12 @@ class MQServer
 
         // 延迟入列|重试入列|更新mq最后使用id数据|更新队列数据的状态
         $worker->tick(1000, function () {
-            static::$delayCount -= static::$delay->tick();
+            //延迟入列
+            //static::$delayCount -= static::$delay->tick();
+            static::$delay->tick();
 
             //重试入列
-            $now = time();
-            $items = redis()->zrevrangebyscore(MQLib::$prefix . MQLib::QUEUE_RETRY_LIST, $now, '-inf');
-            if ($items) {
-                $redis = redis();
-                $redis->retries = 1;
-                foreach ($items as $id) {
-                    //"$topic,$queueName,$id,$ack,$retry-$retry_step,$data"
-                    $package_str = $redis->hget(MQLib::$prefix . MQLib::QUEUE_RETRY_HASH, $id); //
-                    if (!$package_str) { //数据可能被清除
-                        $redis->zRem(MQLib::$prefix . MQLib::QUEUE_RETRY_LIST, $id);
-                        continue;
-                    }
-
-                    list($topic, $queueName, $id, $ack, $retry, $data) = explode(',', $package_str, 6);
-                    $push = [
-                        'id'=>$id,
-                        'topic'=>$topic,
-                        'queueName'=>$queueName,
-                        'ack'=>$ack,
-                        'retry'=>$retry,
-                        'data'=>$data
-                    ];
-                    static::retryClean($id, true); #清除
-                    list($retry, $retry_step) = explode('-', $retry, 2);
-                    static::queueUpdate($queueName, $id, ['retry_count'=>(int)$retry_step]);
-                    static::push($push);
-                }
-            }
+            static::$retry->tick();
 
             //更新mq最后使用id数据
             db()->beginTrans();
@@ -361,17 +347,16 @@ class MQServer
         //重试缓存数据载入 缓存中有记录 不执行载入处理
         $retryNum = redis()->hlen(MQLib::$prefix . MQLib::QUEUE_RETRY_HASH);
         if ($retryNum == 0) {
-            $redis = redis();
             $count = db()->getCount(MQLib::QUEUE_RETRY_TABLE);
             $last_id = 0;
             while ($retryNum < $count) {
-                $redis->multi(MyRedis::PIPELINE);
+                static::$retry->beforeAdd();
                 $res = db()->query('select id,ctime,queue_str from ' . MQLib::QUEUE_RETRY_TABLE . ' where id>' . $last_id . ' order by id asc limit 500');
                 while ($item = db()->fetch_array($res)) {
-                    static::retryQueue($item['id'], $item['ctime'], $item['queue_str']);
+                    static::$retry->add($item['id'], $item['ctime'], $item['queue_str']);
                     $last_id = $item['id'];
                 }
-                $redis->exec();
+                static::$retry->afterAdd();
                 $retryNum += 500;
             }
         }
@@ -394,13 +379,13 @@ class MQServer
 
         $time = time();
         //持久缓存重试数据
-        $retryList = redis()->ZRANGEBYSCORE(MQLib::$prefix . MQLib::QUEUE_RETRY_LIST, time(), '+inf');
+        $retryList = static::$retry->getIdList();
         if($retryList){
             db()->beginTrans();
             $retryStmt = db()->prepare('INSERT INTO '.MQLib::QUEUE_RETRY_TABLE.'(id,ctime,queue_str) VALUES (?, ?, ?)');
             $n=0;
             foreach ($retryList as $id){
-                $package_str = redis()->hget(MQLib::$prefix . MQLib::QUEUE_RETRY_HASH, $id); //
+                $package_str = static::$retry->getData($id);
                 if (!$package_str) { //数据可能被清除
                     continue;
                 }
@@ -422,7 +407,7 @@ class MQServer
         }
 
         // 清除redis重试缓存
-        redis()->del(MQLib::$prefix . MQLib::QUEUE_RETRY_LIST, MQLib::$prefix . MQLib::QUEUE_RETRY_HASH);
+        static::$retry->clear();
         // 清除redis延迟缓存
         static::$delay->clear();
     }
@@ -633,7 +618,7 @@ class MQServer
             }
             $retry = (int)$retry;
             if ($retry > $retry_step) { //进程结束会记录到持久缓存表 意外关机
-                static::retryQueue($id, $time + MQLib::getRetryStep($topic, $retry_step), $topic . ',' . $queueName . ',' . $id . ',' . $ack . ',' . $retry.'-'.($retry_step+1) . ',' . $data);
+                static::$retry->add($id, $time + MQLib::getRetryStep($topic, $retry_step), $topic . ',' . $queueName . ',' . $id . ',' . $ack . ',' . $retry.'-'.($retry_step+1) . ',' . $data);
             }
 
             if ($retry_step == 0) {
@@ -660,7 +645,7 @@ class MQServer
             $step = MQLib::queueStep();
             $queueName = date('mdHi', (int)floor($time / $step) * $step);;
         }
-        static::retryClean($id);
+        static::$retry->clean($id);
         //static::setStatus($queueName, $id, $status, $result);
         $result = $data['result'] ?? '';
         $data = ['status' => $status];
@@ -673,8 +658,8 @@ class MQServer
         $stats = [
             'queue_count' => (int)redis()->get(MQLib::$prefix . MQLib::REAL_QUEUE_COUNT),
             'handle_count' => (int)redis()->get(MQLib::$prefix . MQLib::REAL_HANDLE_COUNT),
-            'retry_count' => (int)redis()->zcard(MQLib::$prefix . MQLib::QUEUE_RETRY_LIST),
-            'delay_count' => (int)redis()->get(MQLib::$prefix . MQLib::REAL_DELAY_COUNT),
+            'retry_count' => static::$retry->getCount(), // (int)redis()->zcard(MQLib::$prefix . MQLib::QUEUE_RETRY_LIST),
+            'delay_count' => static::$delay->getCount(), // (int)redis()->get(MQLib::$prefix . MQLib::REAL_DELAY_COUNT),
             'real_recv_num' => (int)redis()->get(MQLib::$prefix . MQLib::REAL_RECV_NUM),
             'real_pop_num' => (int)redis()->get(MQLib::$prefix . MQLib::REAL_POP_NUM),
             'real_push_num' => (int)redis()->get(MQLib::$prefix . MQLib::REAL_PUSH_NUM),
@@ -713,7 +698,7 @@ class MQServer
      * @param int $id
      * @param array $data
      */
-    protected static function queueUpdate($queueName, $id, $data)
+    public static function queueUpdate($queueName, $id, $data)
     {
         if (!isset(static::$cacheQueueUpdate[$queueName])) {
             static::$cacheQueueUpdate[$queueName] = [];
@@ -723,35 +708,6 @@ class MQServer
         }
         static::$cacheQueueUpdate[$queueName][$id] = array_merge(static::$cacheQueueUpdate[$queueName][$id], $data);
         static::$cacheQueueUpdate[$queueName][$id]['mtime'] = time();
-    }
-    /**
-     * 重试集合
-     * @param $id
-     * @param $time
-     * @param $data "$topic,$queueName,$id,$ack,($retry-1),$data"
-     */
-    protected static function retryQueue($id, $time, $data)
-    {
-        redis()->zAdd(MQLib::$prefix . MQLib::QUEUE_RETRY_LIST, $time, $id);
-        redis()->hset(MQLib::$prefix . MQLib::QUEUE_RETRY_HASH, $id, $data);
-    }
-
-    /**
-     * 清除重试
-     * @param $id
-     * @param bool $retry 是否重试清除
-     */
-    protected static function retryClean($id, $retry = false)
-    {
-        Log::DEBUG("<- " . ($retry ? 'Retry' : 'Recv') . " PUBACK package, id:$id");
-        if (SrvBase::$isConsole) {
-            SrvBase::safeEcho(date("Y-m-d H:i:s")." <- " . ($retry ? 'Retry' : 'Recv') . " PUBACK package, id:$id" . PHP_EOL);
-        }
-        $redis = redis();
-        if ($redis->hExists(MQLib::$prefix . MQLib::QUEUE_RETRY_HASH, $id)) {
-            $redis->zRem(MQLib::$prefix . MQLib::QUEUE_RETRY_LIST, $id);
-            $redis->hdel(MQLib::$prefix . MQLib::QUEUE_RETRY_HASH, $id);
-        }
     }
 
     /**
@@ -778,7 +734,7 @@ class MQServer
                     if ($item['ctime'] <= $time) {
                         static::$queueData[$item['topic']]->enqueue($queue_str);
                     } else {
-                        static::$delayCount++;
+                        //static::$delayCount++;
                         if ($item['ctime'] <= static::$next2StepTime) { //延时在一间隔时间段内的 直接加入缓存 超过定时定时读入缓存
                             static::$delay->add($item['topic'], $item['ctime'], $queue_str);
                         }

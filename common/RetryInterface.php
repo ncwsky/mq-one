@@ -9,12 +9,6 @@ interface RetryInterface
      */
     public function tick();
 
-    /**
-     * 进程结束存储重试数据
-     * @return void
-     */
-    public function stop2save();
-
     public function beforeAdd();
 
     /**
@@ -27,6 +21,19 @@ interface RetryInterface
     public function add($id, $time, $data);
 
     public function afterAdd();
+
+    /**
+     * 获取重试id列表
+     * @return array
+     */
+    public function getIdList();
+
+    /**
+     * 获取重试的数据
+     * @param $id
+     * @return string
+     */
+    public function getData($id);
 
     /**
      * 清除重试

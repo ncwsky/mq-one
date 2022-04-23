@@ -2,6 +2,13 @@
 
 interface DelayInterface
 {
+    public function getCount();
+
+    /**
+     * 当前实际待处理延迟数
+     * @return mixed
+     */
+    public function waitingCount();
     /**
      * 定时延时入列数据
      * @return int 入列数
@@ -21,5 +28,9 @@ interface DelayInterface
 
     public function afterAdd();
 
+    /**
+     * 清除所有
+     * @return void
+     */
     public function clear();
 }

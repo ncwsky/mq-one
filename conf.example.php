@@ -33,6 +33,7 @@ $cfg = array(
         //'cmd' => [10, 30, 60, 90, 120, 180],
     ],
     'delay_class' => '',
+    'retry_class' => '',
     // ----- message queue end -----
 );
 /**

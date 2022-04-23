@@ -17,10 +17,6 @@ class RetryRedis implements RetryInterface
         return $this->count;
     }
 
-    public function stop2save(){
-
-    }
-
     /**
      * 定时延时入列数据
      * @return int 入列数
@@ -73,6 +69,14 @@ class RetryRedis implements RetryInterface
 
     public function afterAdd(){
         $this->redis->exec();
+    }
+
+    public function getIdList(){
+        return $this->redis->ZRANGEBYSCORE(MQLib::$prefix . MQLib::QUEUE_RETRY_LIST, time()-10, '+inf');
+    }
+
+    public function getData($id){
+        return $this->redis->hget(MQLib::$prefix . MQLib::QUEUE_RETRY_HASH, $id);
     }
 
     /**

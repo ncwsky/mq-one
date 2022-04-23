@@ -68,17 +68,21 @@ $conf = [
         'pidFile' => RUN_DIR . '/mq.pid',  //pid_file
         'logFile' => RUN_DIR . '/log.log', //日志文件 log_file
         'log_level' => 0,
-        //swoole
-        /*'open_eof_check' => true, //打开EOF检测
-        'package_eof' => "\n", //设置EOF
-        */
         'open_length_check' => true,
         'package_length_func' => function ($buffer) { //自定义解析长度
-            $pos = strpos($buffer, "\n");
+/*            $pos = strpos($buffer, "\n");
             if ($pos === false) {
                 return 0;
             }
-            return $pos + strlen("\n");
+            return $pos + strlen("\n");*/
+            if (strlen($buffer) < 6) {
+                return 0;
+            }
+            $unpack_data = unpack('Cnull/Ntotal_length/Cstart', $buffer);
+            if ($unpack_data['null'] !== 0x00 || $unpack_data['start'] !== 0x02) {
+                return 0;
+            }
+            return $unpack_data['total_length'];
         }
     ],
     'event' => [
