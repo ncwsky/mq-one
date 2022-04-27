@@ -10,3 +10,4 @@ runLock
 /composer.lock
 /run.php
 /demo
+/MyMQ.info

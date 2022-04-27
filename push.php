@@ -56,7 +56,7 @@ $rawData = MQPackN2::toEncode('topic=cmd&data='.$data);
 //file_put_contents(__DIR__.'/tcp', $rawData);
 
 $client = TcpClient::instance();
-$client->config('127.0.0.1:55011');
+$client->config('192.168.0.245:55011');
 $client->onInput = function ($buffer) {
     //return MQPackN2::toEncode($buffer) . "\n";
     return MQPackN2::input($buffer);
@@ -74,7 +74,7 @@ $count = 0;
 while(1){
     $topic = 'cmd';
     $data = 'php yii mch-order/tm-ymd-report -1';
-    $delay = mt_rand(0, 9) ? 0 : mt_rand(10, 600);
+    $delay = mt_rand(0, 9) ? 0 : mt_rand(10, 120);
     $retry = mt_rand(0, 5) ? 0 : mt_rand(1, 7);
     $ack = mt_rand(0, 9) ? 0 : 1;
     $rawData = 'topic=cmd&data=' . $data . '&delay=' . $delay . '&retry=' . $retry . '&ack=' . $ack;

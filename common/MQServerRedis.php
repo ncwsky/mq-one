@@ -404,7 +404,7 @@ class MQServer
 
         $time = time();
         //持久缓存重试数据
-        $retryList = redis()->ZRANGEBYSCORE(MQLib::$prefix . MQLib::QUEUE_RETRY_LIST, time(), '+inf');
+        $retryList = redis()->ZRANGEBYSCORE(MQLib::$prefix . MQLib::QUEUE_RETRY_LIST, '-inf', '+inf'); //time()-10
         if($retryList){
             db()->beginTrans();
             $retryStmt = db()->prepare('INSERT INTO '.MQLib::QUEUE_RETRY_TABLE.'(id,ctime,queue_str) VALUES (?, ?, ?)');

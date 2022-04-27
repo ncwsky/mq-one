@@ -6,15 +6,15 @@ class RetryRedis implements RetryInterface
      * @var MyRedis|lib_redis
      */
     private $redis;
-    private $count = 0;
 
     public function __construct()
     {
         $this->redis = redis();
     }
-
+    //重试数
     public function getCount(){
-        return $this->count;
+        return (int)$this->redis->hlen(MQLib::$prefix . MQLib::QUEUE_RETRY_HASH);
+        //return (int)$this->redis->zcard(MQLib::$prefix . MQLib::QUEUE_RETRY_LIST);
     }
 
     /**
@@ -64,7 +64,6 @@ class RetryRedis implements RetryInterface
     public function add($id, $time, $data){
         $this->redis->zAdd(MQLib::$prefix . MQLib::QUEUE_RETRY_LIST, $time, $id);
         $this->redis->hset(MQLib::$prefix . MQLib::QUEUE_RETRY_HASH, $id, $data);
-        $this->count++;
     }
 
     public function afterAdd(){
@@ -72,7 +71,7 @@ class RetryRedis implements RetryInterface
     }
 
     public function getIdList(){
-        return $this->redis->ZRANGEBYSCORE(MQLib::$prefix . MQLib::QUEUE_RETRY_LIST, time()-10, '+inf');
+        return $this->redis->ZRANGEBYSCORE(MQLib::$prefix . MQLib::QUEUE_RETRY_LIST, '-inf', '+inf'); //time()-10
     }
 
     public function getData($id){
@@ -92,13 +91,11 @@ class RetryRedis implements RetryInterface
         if ($this->redis->hExists(MQLib::$prefix . MQLib::QUEUE_RETRY_HASH, $id)) {
             $this->redis->zRem(MQLib::$prefix . MQLib::QUEUE_RETRY_LIST, $id);
             $this->redis->hdel(MQLib::$prefix . MQLib::QUEUE_RETRY_HASH, $id);
-            $this->count--;
         }
     }
 
     public function clear()
     {
-        $this->count = 0;
         $this->redis->del(MQLib::$prefix . MQLib::QUEUE_RETRY_LIST, MQLib::$prefix . MQLib::QUEUE_RETRY_HASH);
     }
 }

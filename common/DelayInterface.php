@@ -2,8 +2,6 @@
 
 interface DelayInterface
 {
-    public function getCount();
-
     /**
      * 当前实际待处理延迟数
      * @return mixed

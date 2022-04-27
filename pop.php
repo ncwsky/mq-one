@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 require __DIR__ . '/conf.php';
 require __DIR__ . '/../myphp/base.php';
+$testCount = empty($argv[1]) ? 0 : (int)$argv[1];
+if ($testCount <= 0) $testCount = 0;
 
 $client = TcpClient::instance();
-$client->config('127.0.0.1:55011');
+$client->config('192.168.0.245:55011');
 $client->onInput = function ($buffer) {
     //return MQPackN2::toEncode($buffer) . "\n";
     return MQPackN2::input($buffer);
@@ -19,6 +21,7 @@ $client->onDecode = function ($buffer) {
     //$buffer = rtrim($buffer, "\n");
     return substr($buffer, 6);
 };
+$count = 0;
 while (1) {
     try {
         $client->send('cmd=pop&topic=cmd');
@@ -29,6 +32,7 @@ while (1) {
             sleep(1);
             continue;
         }
+        $count++;
 
         $mqList = explode("\r", $ret);
         foreach ($mqList as $mq) {
@@ -54,6 +58,9 @@ while (1) {
     } catch (Exception $e) {
         echo date("Y-m-d H:i:s") . ' ' . $e->getMessage(), PHP_EOL;
         sleep(2);
+    }
+    if ($testCount && $count >= $testCount) {
+        break;
     }
 }
 

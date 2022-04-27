@@ -9,7 +9,12 @@ class MQServer
     // 注意mysql:max_allowed_packet,innodb_log_buffer_size
     public static $maxBufferSize = 512000; //最大数据缓存大小 0.5M
     public static $maxBufferNum = 1000;
-    public static $maxQueueWaitingNum = 10000; //最大队列等待数
+
+    /**
+     * 信息统计
+     * @var array
+     */
+    protected static $infoStats = [];
 
     /**
      * 每秒实时接收数量
@@ -153,161 +158,94 @@ class MQServer
         return $name;
     }
 
+    //更新队列数据的状态
+    protected static function toQueueUpdate(){
+        foreach (static::$cacheQueueUpdate as $queueName => $items) {
+            if ($items) {
+                try {
+                    db()->beginTrans();
+                    foreach ($items as $id => $item) {
+                        db()->update($item, MQLib::QUEUE_TABLE_PREFIX . $queueName, 'id=' . $id);
+                    }
+                    db()->commit();
+                } catch (\Exception $e) {
+                    Log::write($e->getMessage(), 'fail');
+                }
+                static::$cacheQueueUpdate[$queueName] = [];
+            }
+        }
+    }
+    //更新mq最后使用id数据
+    protected static function toMqListLastId($isStop=false){
+        //更新mq最后使用id数据
+        db()->beginTrans();
+        foreach (static::$cacheMqListLastId as $queueName => $last_id) {
+            db()->update(['last_id' => $last_id], MQLib::MQ_LIST_TABLE, ['name' => $queueName, 'last_id<' . $last_id]);
+            unset(static::$cacheMqListLastId[$queueName]);
+        }
+        if ($isStop) {
+            list($minId, $minQueueName) = static::$delay->stop2minId();
+            $nearQueueName = date('mdHi', static::$next2StepTime - 2 * static::$queueStep);
+            $currQueueName = date('mdHi', (int)floor(time() / static::$queueStep) * static::$queueStep);
+            Log::write($nearQueueName . ' - ' . $currQueueName);
+            if ($minQueueName == $currQueueName && $minId > 0) {
+                Log::write($minId . ' - ' . $minQueueName, 'delayMinId');
+                db()->update(['last_id' => $minId], MQLib::MQ_LIST_TABLE, ['name' => $minQueueName]);
+            }
+        }
+        db()->commit();
+    }
     /**
-     * 进程启动时处理
-     * @param $worker
+     * 间隔时段定时 移除无用的缓存队列名|下下间隔时段的延迟数据|过期数据清理  todo 优化
      * @param $worker_id
      * @throws Exception
      */
-    public static function onWorkerStart($worker, $worker_id)
-    {
-        ini_set('memory_limit', '512M');
-        MQLib::initConf();
-        static::$delayClass = GetC('delay_class', DelayPHP::class);
-        if (empty(static::$delayClass) || !class_exists(static::$delayClass)) {
-            static::$delayClass = DelayPHP::class;
+    protected static function toQueueStep($worker_id){
+        //延迟数据入缓存
+        $nextQueueName = date('mdHi', static::$next2StepTime);
+        //下下间隔时段的延迟数据  调整了$queueStep的值  旧的延迟数据将无法读取
+        $r = db()->find(MQLib::MQ_LIST_TABLE, "name='".$nextQueueName."'", '', 'name,last_id,end_id');
+        $last_id = 0;
+        while ($last_id < $r['end_id']){
+            $res = db()->query('select id,ctime,topic,retry,ack,data from ' . MQLib::QUEUE_TABLE_PREFIX . $nextQueueName . ' where id>' . $last_id . ' order by id asc limit 500');
+            static::$delay->beforeAdd();
+            while ($item = db()->fetch_array($res)) {
+                $queue_str = $r['name'] . ',' . $item['id'] . ',' . $item['ack'] . ',' . $item['retry'] . ',' . $item['data'];
+                static::$delay->add($item['topic'], $item['ctime'], $queue_str);
+                $last_id = $item['id'];
+            }
+            static::$delay->afterAdd();
         }
-        static::$retryClass = GetC('retry_class', RetryRedis::class);
-        if (empty(static::$retryClass) || !class_exists(static::$retryClass)) {
-            static::$retryClass = RetryRedis::class;
-        }
+        //更新下下次时段
+        static::$next2StepTime += static::$queueStep;
 
-        static::$queueStep = MQLib::queueStep();
+        $t = (int)floor(time() / static::$queueStep) * static::$queueStep;
+        foreach (static::$cacheQueueName as $name => $time) {
+            if ($time < $t) {
+                unset(static::$cacheQueueName[$name], static::$bufferData[$name]);
+            }
+        }
+        if ($worker_id == 0) {
+            $t = time();
+            //达到时间清理
+            if (date('ymdG', $t) == static::$nextClearFlag) {
+                Log::DEBUG('data_clear_on_hour : exptime<' . $t);
+                //更新下次清理标识
+                static::$nextClearFlag = date('ymd', $t + 86400) . (string)GetC('data_clear_on_hour', 10);
+
+                //清理过期数据
+                $expList = db()->query('select name from '. MQLib::MQ_LIST_TABLE .' where exptime<' . $t, true);
+                foreach ($expList as $item) {
+                    db()->execute('DROP TABLE IF EXISTS ' . MQLib::QUEUE_TABLE_PREFIX . $item['name']);
+                }
+                db()->del(MQLib::MQ_LIST_TABLE, 'exptime<' . $t);
+            }
+        }
+    }
+    //初始队列
+    protected static function initQueue(){
         $time = time();
         $stepTime = floor($time / static::$queueStep) * static::$queueStep;
-        $nextStepTime = $stepTime + static::$queueStep;
-        static::$next2StepTime = $nextStepTime + static::$queueStep;
-        static::$nextClearFlag = date('ymd') . (string)GetC('data_clear_on_hour', 10);
-        static::$delay = new static::$delayClass();
-        static::$retry = new static::$retryClass();
-
-        // 清除redis延迟缓存
-        static::$delay->clear();
-
-        // 实时统计
-        $worker->tick(1000, function () {
-            redis()->multi(MyRedis::PIPELINE);
-            redis()->setex(MQLib::$prefix . MQLib::REAL_RECV_NUM, 30, static::$realRecvNum);
-            redis()->setex(MQLib::$prefix . MQLib::REAL_POP_NUM, 30, static::$realPopNum);
-            redis()->setex(MQLib::$prefix . MQLib::REAL_PUSH_NUM, 30, static::$realPushNum);
-            redis()->incrby(MQLib::$prefix . MQLib::REAL_QUEUE_COUNT, static::$queueCount);
-            redis()->incrby(MQLib::$prefix . MQLib::REAL_HANDLE_COUNT, static::$handleCount);
-            //redis()->incrby(MQLib::$prefix . MQLib::REAL_DELAY_COUNT, static::$delayCount);
-
-            static::$queueCount = 0;
-            static::$handleCount = 0;
-            //static::$delayCount = 0;
-            static::$realPopNum = 0;
-            static::$realPushNum = 0;
-            static::$realRecvNum = 0;
-            foreach (static::$queueData as $topic => $queue) {
-                redis()->setex(MQLib::$prefix . MQLib::REAL_TOPIC_NUM . ':' . $topic, 30, $queue->count());
-            }
-            redis()->exec();
-        });
-
-        // 延迟入列|重试入列|更新mq最后使用id数据|更新队列数据的状态
-        $worker->tick(1000, function () {
-            //延迟入列
-            //static::$delayCount -= static::$delay->tick();
-            static::$delay->tick();
-
-            //重试入列
-            static::$retry->tick();
-
-            //更新mq最后使用id数据
-            db()->beginTrans();
-            foreach (static::$cacheMqListLastId as $queueName => $last_id) {
-                db()->update(['last_id' => $last_id], MQLib::MQ_LIST_TABLE, ['name' => $queueName, 'last_id<' . $last_id]);
-                unset(static::$cacheMqListLastId[$queueName]);
-            }
-            db()->commit();
-
-            static $lastTime;
-            if (!$lastTime) {
-                $lastTime = time();
-            }
-            $time = time();
-            $toClean = false;
-            $day = 0;
-            if (($lastTime - $time) > 86400) {
-                $lastTime = $time;
-                $toClean = true;
-                $day = (int)date('j', $time);
-            }
-            //更新队列数据的状态
-            foreach (static::$cacheQueueUpdate as $queueName => $items) {
-                if ($items) {
-                    try {
-                        db()->beginTrans();
-                        foreach ($items as $id => $item) {
-                            db()->update($item, MQLib::QUEUE_TABLE_PREFIX . $queueName, 'id=' . $id);
-                        }
-                        db()->commit();
-                    } catch (\Exception $e) {
-                        Log::write($e->getMessage(), 'fail');
-                    }
-                    static::$cacheQueueUpdate[$queueName] = [];
-                }
-
-                if ($toClean) { //移除超过1天的状态缓存  可考虑直接重置 static::$cacheQueueUpdate = [];
-                    $qDay = (int)substr($queueName, 2, 2);
-                    if (abs($day - $qDay) > 1) {
-                        unset(static::$cacheQueueUpdate[$queueName]);
-                    }
-                }
-            }
-        });
-
-        //n ms实时数据落地
-        $worker->tick(200, function () {
-            self::writeToDisk();
-        });
-
-        //间隔时段定时 移除无用的缓存队列名|下下间隔时段的延迟数据|过期数据清理  todo 优化
-        $worker->tick(static::$queueStep * 1000, function () use ($worker_id) {
-            //延迟数据入缓存
-            $nextQueueName = date('mdHi', static::$next2StepTime);
-            //下下间隔时段的延迟数据  调整了$queueStep的值  旧的延迟数据将无法读取
-            $r = db()->find(MQLib::MQ_LIST_TABLE, "name='".$nextQueueName."'", '', 'name,last_id,end_id');
-            $last_id = 0;
-            while ($last_id < $r['end_id']){
-                $res = db()->query('select id,ctime,topic,retry,ack,data from ' . MQLib::QUEUE_TABLE_PREFIX . $nextQueueName . ' where id>' . $last_id . ' order by id asc limit 500');
-                static::$delay->beforeAdd();
-                while ($item = db()->fetch_array($res)) {
-                    $queue_str = $r['name'] . ',' . $item['id'] . ',' . $item['ack'] . ',' . $item['retry'] . ',' . $item['data'];
-                    static::$delay->add($item['topic'], $item['ctime'], $queue_str);
-                    $last_id = $item['id'];
-                }
-                static::$delay->afterAdd();
-            }
-            //更新下下次时段
-            static::$next2StepTime += static::$queueStep;
-
-            $t = (int)floor(time() / static::$queueStep) * static::$queueStep;
-            foreach (static::$cacheQueueName as $name => $time) {
-                if ($time < $t) {
-                    unset(static::$cacheQueueName[$name], static::$bufferData[$name]);
-                }
-            }
-            if ($worker_id == 0) {
-                $t = time();
-                //达到时间清理
-                if (date('ymdG', $t) == static::$nextClearFlag) {
-                    Log::DEBUG('data_clear_on_hour : exptime<' . $t);
-                    //更新下次清理标识
-                    static::$nextClearFlag = date('ymd', $t + 86400) . (string)GetC('data_clear_on_hour', 10);
-
-                    //清理过期数据
-                    $expList = db()->query('select name from '. MQLib::MQ_LIST_TABLE .' where exptime<' . $t, true);
-                    foreach ($expList as $item) {
-                        db()->execute('DROP TABLE IF EXISTS ' . MQLib::QUEUE_TABLE_PREFIX . $item['name']);
-                    }
-                    db()->del(MQLib::MQ_LIST_TABLE, 'exptime<' . $t);
-                }
-            }
-        });
-
         //初始缓存所有队列表名
         $tables = db()->query('select name,ctime from '. MQLib::MQ_LIST_TABLE .' where ctime>=' . $stepTime . ' order by ctime asc', true);
         foreach ($tables as $r) {
@@ -316,36 +254,45 @@ class MQServer
         }
         static::queueName($time);
 
-        //初始待处理数据 3天内的+下2次时段的数据
-        $tables = db()->all(MQLib::MQ_LIST_TABLE, 'ctime>=' . ($stepTime - 3 * 86400) . ' and ctime<=' . static::$next2StepTime . ' and end_id>last_id', 'ctime asc', 'name,last_id,end_id');
-        // 'select name,last_id,end_id from ' . MQLib::MQ_LIST_TABLE . ' where ctime>=' . ($stepTime - 3 * 86400) . ' and ctime<=' . ($stepTime + static::$queueStep) . ' and end_id>last_id order by ctime asc';
+        //初始待处理数据 3天内的+下1次时段的数据
+        $tables = db()->all(MQLib::MQ_LIST_TABLE, 'ctime>=' . ($stepTime - 3 * 86400) . ' and ctime<' . static::$next2StepTime . ' and end_id>last_id', 'ctime asc', 'name,last_id,end_id');
         foreach ($tables as $r) {
             $last_id = $r['last_id'];
+            $up_last_id = 0; //因延迟数据 last_id 更正
             $count = 0;
             while ($last_id < $r['end_id']) {
-                $res = db()->query('select id,ctime,topic,retry,ack,data from ' . MQLib::QUEUE_TABLE_PREFIX . $r['name'] . ' where id>' . $last_id . ' order by id asc limit 500');
+                $res = db()->query('select id,ctime,mtime,status,topic,retry,ack,data from ' . MQLib::QUEUE_TABLE_PREFIX . $r['name'] . ' where id>=' . $last_id . ' order by id asc limit 500');
                 static::$delay->beforeAdd();
                 while ($item = db()->fetch_array($res)) {
+                    $last_id = $item['id'];
+                    if (!empty($item['status'])) {
+                        $up_last_id = $item['id'];
+                        continue;
+                    }
                     if (!isset(static::$queueData[$item['topic']])) {
                         static::$queueData[$item['topic']] = new SplQueue();
                     }
 
                     $queue_str = $r['name'] . ',' . $item['id'] . ',' . $item['ack'] . ',' . $item['retry'] . ',' . $item['data'];
                     if ($item['ctime'] <= $time) {
+                        if ($item['ctime'] > $item['mtime']) static::$delayCount--;
                         static::$queueData[$item['topic']]->enqueue($queue_str);
                     } else {
                         static::$delay->add($item['topic'], $item['ctime'], $queue_str);
                     }
-                    $last_id = $item['id'];
                     $count++;
                 }
                 static::$delay->afterAdd();
             }
+            if ($up_last_id>0) {
+                db()->update(['last_id' => $up_last_id], MQLib::MQ_LIST_TABLE, ['name' => $r['name']]);
+            }
             Log::write('init: ' . $r['name'] . '->' . $r['last_id'] . '<-' . $last_id . ', count:' . $count);
         }
-
-        //重试缓存数据载入 缓存中有记录 不执行载入处理
-        $retryNum = redis()->hlen(MQLib::$prefix . MQLib::QUEUE_RETRY_HASH);
+    }
+    //初始重试数据
+    protected static function initRetry(){
+        $retryNum = static::$retry->getCount(); //缓存中有记录 不执行载入处理
         if ($retryNum == 0) {
             $count = db()->getCount(MQLib::QUEUE_RETRY_TABLE);
             $last_id = 0;
@@ -363,6 +310,171 @@ class MQServer
         //清空重试持久缓存表
         db()->execute((MQLib::$isSqlite ? 'DELETE FROM ' : 'TRUNCATE TABLE ') . MQLib::QUEUE_RETRY_TABLE);
     }
+    //重试缓存数据落盘存储便于下次启动使用
+    protected static function toRetrySave(){
+        $retryList = static::$retry->getIdList();
+        if(!$retryList) return; //无重试缓存
+
+        $time = time();
+        db()->beginTrans();
+        $retryStmt = db()->prepare('INSERT INTO '.MQLib::QUEUE_RETRY_TABLE.'(id,ctime,queue_str) VALUES (?, ?, ?)');
+        $n=0;
+        foreach ($retryList as $id){
+            $package_str = static::$retry->getData($id);
+            if (!$package_str) { //数据可能被清除
+                continue;
+            }
+
+            list($topic, $queueName, $id, $ack, $retry, $data) = explode(',', $package_str, 6);
+
+            list($retry, $retry_step) = explode('-', $retry, 2);
+            $ctime = $time + MQLib::getRetryStep($topic, $retry_step);
+
+            $retryStmt->execute([$id, $ctime, $package_str]);
+            $n++;
+            if ($n > 1000) {
+                db()->commit();
+                db()->beginTrans();
+                $n = 0;
+            }
+        }
+        db()->commit();
+    }
+    /**
+     * 统计信息 初始
+     */
+    protected static function initInfo()
+    {
+        $file = SrvBase::$instance->runDir . '/' . SrvBase::$instance->serverName() . '.info';
+        if (!is_file($file)) {
+            static::$infoStats = [
+                'queue_count' => 0,
+                'handle_count' => 0,
+                'delay_count' => 0,
+            ];
+        } else {
+            static::$infoStats = (array)json_decode(file_get_contents($file), true);
+        }
+        static::$infoStats = array_merge(static::$infoStats, [
+            'retry_count' => 0,
+            'real_recv_num' => 0,
+            'real_pop_num' => 0,
+            'real_push_num' => 0,
+            'waiting_delay_num'=>0,
+            'waiting_num' => 0,
+            'topic_count' => 0,
+            'topic_list' => []
+        ]);
+    }
+    /**
+     * 统计信息 存储
+     * @param bool $flush
+     */
+    public static function infoTick($flush = false){
+        static::$infoStats['queue_count'] += static::$queueCount;
+        static::$infoStats['handle_count'] += static::$handleCount;
+        static::$infoStats['delay_count'] += static::$delayCount; //延迟总数
+        static::$infoStats['retry_count'] = static::$retry->getCount();
+        static::$infoStats['real_recv_num'] = static::$realRecvNum;
+        static::$infoStats['real_pop_num'] = static::$realPopNum;
+        static::$infoStats['real_push_num'] = static::$realPushNum;
+        static::$infoStats['waiting_delay_num'] = static::$delay->waitingCount(); //最近时段待处理的延迟
+        static::$infoStats['waiting_num'] = 0;
+        static::$infoStats['topic_count'] = 0;
+        static::$infoStats['topic_list'] = [];
+
+        //待处理数量
+        static::$infoStats['topic_count'] = count(static::$queueData);
+        foreach (static::$queueData as $topic => $queue) {
+            $num = $queue->count();
+            static::$infoStats['waiting_num'] += $num;
+            if (isset(static::$infoStats['topic_queue'][$topic])) {
+                static::$infoStats['topic_list'][$topic] += $num;
+            } else {
+                static::$infoStats['topic_list'][$topic] = $num;
+            }
+        }
+
+        static::$queueCount = 0;
+        static::$handleCount = 0;
+        static::$delayCount = 0;
+        static::$realPopNum = 0;
+        static::$realPushNum = 0;
+        static::$realRecvNum = 0;
+
+        $flush && file_put_contents(SrvBase::$instance->runDir . '/' . SrvBase::$instance->serverName() . '.info', json_encode(static::$infoStats), LOCK_EX);
+    }
+
+    /**
+     * 进程启动时处理
+     * @param $worker
+     * @param $worker_id
+     * @throws Exception
+     */
+    public static function onWorkerStart($worker, $worker_id)
+    {
+        ini_set('memory_limit', '512M');
+        MQLib::initConf();
+        static::$queueStep = MQLib::queueStep();
+        $time = time();
+        $stepTime = floor($time / static::$queueStep) * static::$queueStep;
+        $nextStepTime = $stepTime + static::$queueStep;
+        static::$next2StepTime = $nextStepTime + static::$queueStep;
+        static::$nextClearFlag = date('ymd') . (string)GetC('data_clear_on_hour', 10);
+
+        static::$delayClass = GetC('delay_class', DelayPHP::class);
+        if (empty(static::$delayClass) || !class_exists(static::$delayClass)) {
+            static::$delayClass = DelayPHP::class;
+        }
+        static::$retryClass = GetC('retry_class', RetryRedis::class);
+        if (empty(static::$retryClass) || !class_exists(static::$retryClass)) {
+            static::$retryClass = RetryRedis::class;
+        }
+        static::$delay = new static::$delayClass();
+        static::$retry = new static::$retryClass();
+        // 清除redis延迟缓存
+        static::$delay->clear();
+        //初始统计信息
+        static::initInfo();
+        //初始队列
+        static::initQueue();
+        //初始重试数据
+        static::initRetry();
+
+        // 延迟入列|重试入列|更新mq最后使用id数据|更新队列数据的状态
+        $worker->tick(1000, function () use($worker_id) {
+            static $lastTime;
+            //信息统计
+            static::infoTick(date("s") == '59');
+
+            //延迟入列
+            static::$delayCount -= static::$delay->tick();
+
+            //重试入列
+            static::$retry->tick();
+
+            //更新队列数据的状态
+            static::toQueueUpdate();
+
+            //重置|更新last_id
+            if (!$lastTime) {
+                $lastTime = time();
+            } else {
+                $time = time();
+                if (($time - $lastTime) >= static::$queueStep) {
+                    $lastTime = $time;
+                    static::$cacheQueueUpdate = [];
+                    static::toMqListLastId();
+                    //间隔时段 移除无用的缓存队列名|下下间隔时段的延迟数据|过期数据清理  todo 优化
+                    static::toQueueStep($worker_id);
+                }
+            }
+        });
+        //n ms实时数据落地
+        $worker->tick(200, function () {
+            static::writeToDisk();
+        });
+    }
 
     /**
      * 终端数据进程结束时的处理
@@ -372,40 +484,16 @@ class MQServer
      */
     public static function onWorkerStop($worker, $worker_id)
     {
-        //进程结束时把缓存的数据写入到磁盘
-        self::writeToDisk();
-
-        if ($worker_id != 0) return;
-
-        $time = time();
-        //持久缓存重试数据
-        $retryList = static::$retry->getIdList();
-        if($retryList){
-            db()->beginTrans();
-            $retryStmt = db()->prepare('INSERT INTO '.MQLib::QUEUE_RETRY_TABLE.'(id,ctime,queue_str) VALUES (?, ?, ?)');
-            $n=0;
-            foreach ($retryList as $id){
-                $package_str = static::$retry->getData($id);
-                if (!$package_str) { //数据可能被清除
-                    continue;
-                }
-
-                list($topic, $queueName, $id, $ack, $retry, $data) = explode(',', $package_str, 6);
-
-                list($retry, $retry_step) = explode('-', $retry, 2);
-                $ctime = $time + MQLib::getRetryStep($topic, $retry_step);
-
-                $retryStmt->execute([$id, $ctime, $package_str]);
-                $n++;
-                if ($n > 1000) {
-                    db()->commit();
-                    db()->beginTrans();
-                    $n = 0;
-                }
-            }
-            db()->commit();
-        }
-
+        //1 进程结束时把缓存的数据写入到磁盘
+        static::writeToDisk();
+        //2 更新队列数据的状态
+        static::toQueueUpdate();
+        //3 更新mq最后使用id数据
+        static::toMqListLastId(true);
+        //4 信息统计
+        static::infoTick(true);
+        //5 持久缓存重试数据
+        static::toRetrySave();
         // 清除redis重试缓存
         static::$retry->clear();
         // 清除redis延迟缓存
@@ -655,34 +743,7 @@ class MQServer
 
     protected static function stats()
     {
-        $stats = [
-            'queue_count' => (int)redis()->get(MQLib::$prefix . MQLib::REAL_QUEUE_COUNT),
-            'handle_count' => (int)redis()->get(MQLib::$prefix . MQLib::REAL_HANDLE_COUNT),
-            'retry_count' => static::$retry->getCount(), // (int)redis()->zcard(MQLib::$prefix . MQLib::QUEUE_RETRY_LIST),
-            'delay_count' => static::$delay->getCount(), // (int)redis()->get(MQLib::$prefix . MQLib::REAL_DELAY_COUNT),
-            'real_recv_num' => (int)redis()->get(MQLib::$prefix . MQLib::REAL_RECV_NUM),
-            'real_pop_num' => (int)redis()->get(MQLib::$prefix . MQLib::REAL_POP_NUM),
-            'real_push_num' => (int)redis()->get(MQLib::$prefix . MQLib::REAL_PUSH_NUM),
-            'waiting_num' => 0,
-            'topic_count' => 0,
-            'topic_list' => [],
-        ];
-
-        //待处理数量
-        $topicNumList = (array)redis()->keys(MQLib::$prefix . MQLib::REAL_TOPIC_NUM . '*');
-        foreach ($topicNumList as $topicNum) {
-            list(, $topic) = explode(':', $topicNum, 2);
-            $num = (int)redis()->get($topicNum);
-            $stats['waiting_num'] += $num;
-            if (isset($stats['topic_queue'][$topic])) {
-                $stats['topic_list'][$topic] += $num;
-            } else {
-                $stats['topic_list'][$topic] = $num;
-            }
-        }
-        $stats['topic_count'] = count($stats['topic_list']);
-
-        return $stats;
+        return static::$infoStats;
     }
 
     protected static function checkTopic(&$topic)
@@ -714,7 +775,7 @@ class MQServer
      * 将数据写入磁盘
      * @throws \Exception
      */
-    public static function writeToDisk()
+    protected static function writeToDisk()
     {
         if (static::$bufferSize == 0) return;
         $time = time();
@@ -734,7 +795,7 @@ class MQServer
                     if ($item['ctime'] <= $time) {
                         static::$queueData[$item['topic']]->enqueue($queue_str);
                     } else {
-                        //static::$delayCount++;
+                        static::$delayCount++;
                         if ($item['ctime'] <= static::$next2StepTime) { //延时在一间隔时间段内的 直接加入缓存 超过定时定时读入缓存
                             static::$delay->add($item['topic'], $item['ctime'], $queue_str);
                         }
