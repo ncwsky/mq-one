@@ -307,6 +307,7 @@ class MQServer
                 $retryNum += 500;
             }
         }
+        //Log::write((string)static::$retry);
         //清空重试持久缓存表
         db()->execute((MQLib::$isSqlite ? 'DELETE FROM ' : 'TRUNCATE TABLE ') . MQLib::QUEUE_RETRY_TABLE);
     }
