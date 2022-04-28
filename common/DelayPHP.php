@@ -25,7 +25,7 @@ class DelayPHP implements DelayInterface
                 //$queue->setExtractFlags(SplPriorityQueue::EXTR_BOTH);
                 foreach ($queue as $item){
                     //$item['priority']; $queueName, $id, $ack, $retry, $data
-                    list($queueName, $id, , , ) = explode(',', $item, 5); //$item['data']
+                    list($queueName, $id, , , ) = explode(',', $item['data'], 5);
                     if($minId==0 || $minId>$id) {
                         $minId = $id;
                         $minQueueName = $queueName;

@@ -17,6 +17,11 @@ class RetryRedis implements RetryInterface
         //return (int)$this->redis->zcard(MQLib::$prefix . MQLib::QUEUE_RETRY_LIST);
     }
 
+    public function __toString()
+    {
+        return json_encode(['hash' => MQLib::$prefix . MQLib::QUEUE_RETRY_HASH, 'list' => MQLib::$prefix . MQLib::QUEUE_RETRY_LIST]);
+    }
+
     /**
      * 定时延时入列数据
      * @return int 入列数

@@ -8,6 +8,7 @@ class RetryPHP implements RetryInterface
      * @var array 所有重试间隔
      */
     private $timeStep = [];
+    private $timeStepNum = 0;
 
     public function __construct()
     {
@@ -18,8 +19,14 @@ class RetryPHP implements RetryInterface
             }
         }
         $this->timeStep = array_keys($timeStep);
+        $this->timeStepNum = count($this->timeStep);
         sort($this->timeStep);
         Log::write($this->timeStep, 'retry-php');
+    }
+
+    public function __toString()
+    {
+        return json_encode(['hash' => $this->hash, 'list' => $this->list]);
     }
 
     public function getCount(){
@@ -34,7 +41,7 @@ class RetryPHP implements RetryInterface
         $count = 0;
         //重试入列
         $now = time();
-        foreach ($this->timeStep as $retry_step){
+        for ($retry_step = 1; $retry_step <= $this->timeStepNum; $retry_step++) {
             if(empty($this->list[$retry_step])) continue;
             foreach ($this->list[$retry_step] as $id => $time) {
                 if ($time > $now) break;
