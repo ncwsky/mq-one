@@ -50,7 +50,7 @@ class RetryRedis implements RetryInterface
                 'data'=>$data
             ];
             $this->clean($id, true); #清除
-            list($retry, $retry_step) = explode('-', $retry, 2);
+            list(, $retry_step) = explode('-', $retry, 2);
             MQServer::queueUpdate($queueName, $id, ['retry_count'=>(int)$retry_step]);
             MQServer::push($push);
         }

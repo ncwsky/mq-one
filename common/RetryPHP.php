@@ -13,7 +13,9 @@ class RetryPHP implements RetryInterface
     {
         $timeStep = [];
         foreach (MQLib::retryStep() as $name => $steps) {
-            $timeStep = array_merge($timeStep, array_fill_keys($steps, 1));
+            foreach ($steps as $step) {
+                $timeStep[$step] = 1;
+            }
         }
         $this->timeStep = array_keys($timeStep);
         sort($this->timeStep);
@@ -56,7 +58,7 @@ class RetryPHP implements RetryInterface
                     'data'=>$data
                 ];
                 $this->clean($id, true); #清除
-                list($retry, $retry_step) = explode('-', $retry, 2);
+                list(, $retry_step) = explode('-', $retry, 2);
                 MQServer::queueUpdate($queueName, $id, ['retry_count'=>(int)$retry_step]);
                 MQServer::push($push);
             }
@@ -66,7 +68,11 @@ class RetryPHP implements RetryInterface
 
     public function beforeAdd(){}
 
-    public function add($id, $time, $data, $retry_step){
+    public function add($id, $time, $data, $retry_step=null){
+        if($retry_step===null){
+            list(, , , , $retry,) = explode(',', $data, 6);
+            list(, $retry_step) = explode('-', $retry, 2);
+        }
         $this->hash[$id] = [$retry_step, $data];
         if (!isset($this->list[$retry_step])) {
             $this->list[$retry_step] = [];

@@ -26,7 +26,8 @@ class DelayRedis implements DelayInterface
             $items = $this->redis->zRange($delayed, 0, -1); //, 'WITHSCORES'
             if($items){
                 foreach ($items as $item){
-                    list($queueName, $id, $ack, $retry, $data) = explode(',', $item, 5);
+                    //$queueName, $id, $ack, $retry, $data
+                    list($queueName, $id, , , ) = explode(',', $item, 5);
                     if($minId==0 || $minId>$id) {
                         $minId = $id;
                         $minQueueName = $queueName;

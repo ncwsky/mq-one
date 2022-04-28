@@ -16,7 +16,7 @@ interface RetryInterface
      * @param $id
      * @param $time
      * @param $data
-     * @param null $retry_step
+     * @param int|null $retry_step
      * @return mixed
      */
     public function add($id, $time, $data, $retry_step);

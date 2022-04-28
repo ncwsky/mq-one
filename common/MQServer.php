@@ -324,10 +324,9 @@ class MQServer
             if (!$package_str) { //数据可能被清除
                 continue;
             }
-
-            list($topic, $queueName, $id, $ack, $retry, $data) = explode(',', $package_str, 6);
-
-            list($retry, $retry_step) = explode('-', $retry, 2);
+            //$topic, $queueName, $id, $ack, $retry, $data
+            list($topic, , $id, , $retry, ) = explode(',', $package_str, 6);
+            list(, $retry_step) = explode('-', $retry, 2); //$retry, $retry_step
             $ctime = $time + MQLib::getRetryStep($topic, $retry_step);
 
             $retryStmt->execute([$id, $ctime, $package_str]);
