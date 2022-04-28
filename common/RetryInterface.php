@@ -16,15 +16,16 @@ interface RetryInterface
      * @param $id
      * @param $time
      * @param $data
+     * @param null $retry_step
      * @return mixed
      */
-    public function add($id, $time, $data);
+    public function add($id, $time, $data, $retry_step);
 
     public function afterAdd();
 
     /**
      * 获取重试id列表
-     * @return array
+     * @return array [id, ...]
      */
     public function getIdList();
 

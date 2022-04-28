@@ -35,6 +35,7 @@ class RetryRedis implements RetryInterface
             $package_str = $this->redis->hget(MQLib::$prefix . MQLib::QUEUE_RETRY_HASH, $id); //
             if (!$package_str) { //数据可能被清除
                 $this->redis->zRem(MQLib::$prefix . MQLib::QUEUE_RETRY_LIST, $id);
+                $this->redis->hdel(MQLib::$prefix . MQLib::QUEUE_RETRY_HASH, $id);
                 --$count;
                 continue;
             }
@@ -48,7 +49,7 @@ class RetryRedis implements RetryInterface
                 'retry'=>$retry,
                 'data'=>$data
             ];
-            $this->clear($id, true); #清除
+            $this->clean($id, true); #清除
             list($retry, $retry_step) = explode('-', $retry, 2);
             MQServer::queueUpdate($queueName, $id, ['retry_count'=>(int)$retry_step]);
             MQServer::push($push);
@@ -61,7 +62,7 @@ class RetryRedis implements RetryInterface
         $this->redis->retries = 1;
     }
 
-    public function add($id, $time, $data){
+    public function add($id, $time, $data, $retry_step=null){
         $this->redis->zAdd(MQLib::$prefix . MQLib::QUEUE_RETRY_LIST, $time, $id);
         $this->redis->hset(MQLib::$prefix . MQLib::QUEUE_RETRY_HASH, $id, $data);
     }

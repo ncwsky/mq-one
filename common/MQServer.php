@@ -706,7 +706,7 @@ class MQServer
             }
             $retry = (int)$retry;
             if ($retry > $retry_step) { //进程结束会记录到持久缓存表 意外关机
-                static::$retry->add($id, $time + MQLib::getRetryStep($topic, $retry_step), $topic . ',' . $queueName . ',' . $id . ',' . $ack . ',' . $retry.'-'.($retry_step+1) . ',' . $data);
+                static::$retry->add($id, $time + MQLib::getRetryStep($topic, $retry_step), $topic . ',' . $queueName . ',' . $id . ',' . $ack . ',' . $retry.'-'.($retry_step+1) . ',' . $data, $retry_step);
             }
 
             if ($retry_step == 0) {
