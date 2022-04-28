@@ -32,7 +32,7 @@ class RetryRedis implements RetryInterface
         $this->redis->retries = 1;
         foreach ($items as $id) {
             //"$topic,$queueName,$id,$ack,$retry-$retry_step,$data"
-            $package_str = $this->redis->hget(MQLib::$prefix . MQLib::QUEUE_RETRY_HASH, $id); //
+            $package_str = $this->getData($id); //
             if (!$package_str) { //数据可能被清除
                 $this->redis->zRem(MQLib::$prefix . MQLib::QUEUE_RETRY_LIST, $id);
                 $this->redis->hdel(MQLib::$prefix . MQLib::QUEUE_RETRY_HASH, $id);
