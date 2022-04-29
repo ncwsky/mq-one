@@ -25,7 +25,10 @@ class MQLib
     const MQ_LIST_TABLE = 'mq_list';
     const QUEUE_TABLE_PREFIX = 'message_queue';
     const QUEUE_RETRY_TABLE = 'message_queue_retry';
-    const QUEUE_DELAY_TABLE = 'message_queue_delay';
+
+    const ALARM_FAIL = 'fail';
+    const ALARM_RETRY = 'retry';
+    const ALARM_WAITING = 'waiting';
     /**
      * 等待的缓存列队名
      * @var string
@@ -41,9 +44,6 @@ class MQLib
      * 延迟的缓存列队名
      */
     const QUEUE_DELAYED = 'mq_delayed';
-    const LAST_DELAY_ID = 'last_delay_id';
-    const LAST_DELAY_TIME = 'last_delay_time';
-
     const QUEUE_RETRY_LIST = 'mq_retry_list';
     const QUEUE_RETRY_HASH = 'mq_retry_hash';
 
@@ -60,6 +60,15 @@ class MQLib
     public static $authKey = '';
     public static $allowIp = '';
     public static $isSqlite = false;
+
+    protected static $alarmInterval = 0;
+    protected static $alarmWaiting = 0;
+    protected static $alarmRetry = 0;
+    protected static $alarmFail = 0;
+    /**
+     * @var callable|null
+     */
+    protected static $onAlarm = null;
 
     const RETRY_GLOBAL_NAME = '__';
     /**
@@ -141,9 +150,49 @@ class MQLib
         static::$allowIp = GetC('allow_ip');
         static::$authKey = GetC('auth_key');
         static::$isSqlite = GetC('db.dbms')=='sqlite';
+        static::$alarmInterval = (int)GetC('alarm_interval', 60);
+        static::$alarmWaiting = GetC('alarm_waiting');
+        static::$alarmRetry = GetC('alarm_retry');
+        static::$alarmFail = GetC('alarm_fail');
+        static::$onAlarm = GetC('alarm_callback');
+        if (static::$onAlarm && !is_callable(static::$onAlarm)) {
+            static::$onAlarm = null;
+        } elseif (max(static::$alarmWaiting, static::$alarmRetry, static::$alarmFail) <= 0) {
+            static::$onAlarm = null;
+        }
         static::queueStep();
         static::retryStep();
         static::maxRetry();
+    }
+
+    /**
+     * 预警触发处理
+     * @param string $type
+     * @param int $value
+     */
+    public static function alarm($type, $value)
+    {
+        if (!static::$onAlarm) return;
+
+        static $time_waiting = 0, $time_retry = 0, $time_fail = 0;
+        $alarm = false;
+        $alarmCheck = function (&$value, &$alarmValue, &$time, &$alarm) {
+            if ($alarmValue > 0 && $value >= $alarmValue && (MQServer::$tickTime - $time) >= static::$alarmInterval) {
+                $time = MQServer::$tickTime;
+                $alarm = true;
+            }
+        };
+        if ($type == MQLib::ALARM_WAITING) {
+            $alarmCheck($value, static::$alarmWaiting, $time_waiting, $alarm);
+        } elseif ($type == MQLib::ALARM_RETRY) {
+            $alarmCheck($value, static::$alarmRetry, $time_retry, $alarm);
+        } elseif ($type == MQLib::ALARM_FAIL) {
+            $alarmCheck($value, static::$alarmFail, $time_fail, $alarm);
+        }
+        if ($alarm) {
+            Log::write($type . ' -> ' . $value, 'alarm');
+            call_user_func(static::$onAlarm, $type, $value);
+        }
     }
 
     //队列存储间隔 秒

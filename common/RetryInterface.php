@@ -13,9 +13,9 @@ interface RetryInterface
 
     /**
      * 添加重试数据
-     * @param $id
-     * @param $time
-     * @param $data
+     * @param int $id
+     * @param int $time
+     * @param string $data
      * @param int|null $retry_step
      * @return mixed
      */
@@ -31,14 +31,14 @@ interface RetryInterface
 
     /**
      * 获取重试的数据
-     * @param $id
+     * @param int $id
      * @return string
      */
     public function getData($id);
 
     /**
      * 清除重试
-     * @param $id
+     * @param int $id
      * @param bool $retry 是否重试清除
      */
     public function clean($id, $retry = false);

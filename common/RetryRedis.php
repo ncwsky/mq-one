@@ -29,8 +29,8 @@ class RetryRedis implements RetryInterface
     public function tick(){
         $count = 0;
         //重试入列
-        $now = time();
-        $items = $this->redis->zrevrangebyscore(MQLib::$prefix . MQLib::QUEUE_RETRY_LIST, $now, '-inf');
+        //$now = time();
+        $items = $this->redis->zrevrangebyscore(MQLib::$prefix . MQLib::QUEUE_RETRY_LIST, MQServer::$tickTime, '-inf');
         if(!$items) return $count;
 
         $count = count($items);
@@ -67,6 +67,14 @@ class RetryRedis implements RetryInterface
         $this->redis->retries = 1;
     }
 
+    /**
+     * 添加重试数据
+     * @param int $id
+     * @param int $time
+     * @param string $data
+     * @param int|null $retry_step
+     * @return mixed
+     */
     public function add($id, $time, $data, $retry_step=null){
         $this->redis->zAdd(MQLib::$prefix . MQLib::QUEUE_RETRY_LIST, $time, $id);
         $this->redis->hset(MQLib::$prefix . MQLib::QUEUE_RETRY_HASH, $id, $data);
@@ -80,13 +88,17 @@ class RetryRedis implements RetryInterface
         return $this->redis->ZRANGEBYSCORE(MQLib::$prefix . MQLib::QUEUE_RETRY_LIST, '-inf', '+inf'); //time()-10
     }
 
+    /**
+     * @param int $id
+     * @return mixed|string
+     */
     public function getData($id){
         return $this->redis->hget(MQLib::$prefix . MQLib::QUEUE_RETRY_HASH, $id);
     }
 
     /**
      * 清除重试
-     * @param $id
+     * @param int $id
      * @param bool $retry 是否重试清除
      */
     public function clean($id, $retry = false){

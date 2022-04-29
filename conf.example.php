@@ -32,8 +32,16 @@ $cfg = array(
     'retry_step' => [ // topic=>[重试间隔值,...] 未配置使用全局值
         //'cmd' => [10, 30, 60, 90, 120, 180],
     ],
-    'delay_class' => '',
-    'retry_class' => '',
+    'delay_class' => DelayPHP::class,
+    'retry_class' => RetryPHP::class,
+    'alarm_interval' => 60, //重复预警间隔 秒
+    'alarm_waiting' => 10000, //待处理预警值
+    'alarm_retry' => 1000, //重试预警值
+    'alarm_fail' => 100, //每分钟失败预警值
+    'alarm_callback' => function ($type, $value) { // type:waiting|retry|fail, value:对应的触发值
+        //todo
+        SrvBase::safeEcho($type . ' -> ' . $value . PHP_EOL);
+    },
     // ----- message queue end -----
 );
 /**

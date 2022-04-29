@@ -53,14 +53,14 @@ class DelayRedis implements DelayInterface
     public function tick()
     {
         //延迟入列
-        $now = time();
+        //$now = time();
         $delayedList = (array)$this->redis->keys(MQLib::$prefix . MQLib::QUEUE_DELAYED . '*');
         $delayedLen = strlen(MQLib::$prefix . MQLib::QUEUE_DELAYED);
         $count = 0;
         foreach ($delayedList as $delayed) {
             //$options = ['LIMIT', 0, 128];
             $topic = substr($delayed, $delayedLen);
-            $items = $this->redis->zrevrangebyscore($delayed, $now, '-inf');
+            $items = $this->redis->zrevrangebyscore($delayed, MQServer::$tickTime, '-inf');
             if ($items) {
                 $_count = count($items);
                 $count += $_count;
@@ -77,7 +77,7 @@ class DelayRedis implements DelayInterface
                     ];
                     MQServer::push($push);
                 }
-                $this->redis->zremrangebyscore($delayed, '-inf', $now);
+                $this->redis->zremrangebyscore($delayed, '-inf', MQServer::$tickTime);
             }
         }
         return $count;

@@ -40,11 +40,11 @@ class RetryPHP implements RetryInterface
     public function tick(){
         $count = 0;
         //重试入列
-        $now = time();
+        //$now = time();
         for ($retry_step = 1; $retry_step <= $this->timeStepNum; $retry_step++) {
             if(empty($this->list[$retry_step])) continue;
             foreach ($this->list[$retry_step] as $id => $time) {
-                if ($time > $now) break;
+                if ($time > MQServer::$tickTime) break;
                 $count++;
 
                 //"$topic,$queueName,$id,$ack,$retry-$retry_step,$data"
@@ -75,6 +75,14 @@ class RetryPHP implements RetryInterface
 
     public function beforeAdd(){}
 
+    /**
+     * 添加重试数据
+     * @param int $id
+     * @param int $time
+     * @param string $data
+     * @param int|null $retry_step
+     * @return mixed
+     */
     public function add($id, $time, $data, $retry_step=null){
         if($retry_step===null){
             list(, , , , $retry,) = explode(',', $data, 6);
@@ -102,13 +110,17 @@ class RetryPHP implements RetryInterface
         return $idList;
     }
 
+    /**
+     * @param int $id
+     * @return mixed|string|null
+     */
     public function getData($id){
         return $this->hash[$id][1] ?? null;
     }
 
     /**
      * 清除重试
-     * @param $id
+     * @param int $id
      * @param bool $retry 是否重试清除
      */
     public function clean($id, $retry = false){

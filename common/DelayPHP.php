@@ -39,12 +39,12 @@ class DelayPHP implements DelayInterface
     public function tick()
     {
         //延迟入列
-        $now = time();
+        //$now = time();
         $count = 0;
         foreach (static::$delayData as $topic => $queue) {
             while ($queue->valid()) {
                 $data = $queue->top();
-                if (-$data['priority'] > $now) {
+                if (-$data['priority'] > MQServer::$tickTime) {
                     break;
                 }
                 $queue->extract();

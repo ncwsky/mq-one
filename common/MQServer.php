@@ -27,6 +27,12 @@ class MQServer
      * @var int
      */
     protected static $realPushNum = 0;
+
+    /**
+     * 每分钟失败数
+     * @var int
+     */
+    protected static $perFailNum = 0;
     /**
      * 队列数
      * @var int
@@ -42,6 +48,12 @@ class MQServer
      * @var int
      */
     protected static $delayCount = 0;
+
+    /**
+     * 失败数
+     * @var int
+     */
+    protected static $failCount = 0;
 
     /**
      * 队列存储间隔
@@ -86,7 +98,7 @@ class MQServer
      * 每秒实时实时出列数量
      * @var int
      */
-    public static $realPopNum = 0;
+    protected static $realPopNum = 0;
 
     /**
      * 队列缓存
@@ -117,10 +129,11 @@ class MQServer
      * @var int
      */
     protected static $next2StepTime = 0;
+
     /**
-     * @var TcpClient
+     * @var int 定时每秒的时间
      */
-    protected static $client;
+    public static $tickTime;
 
     /**
      * 获取|生成队列存储名称
@@ -219,26 +232,25 @@ class MQServer
         //更新下下次时段
         static::$next2StepTime += static::$queueStep;
 
-        $t = (int)floor(time() / static::$queueStep) * static::$queueStep;
+        $now = static::$tickTime; //time();
+        $currStepTime = (int)floor($now / static::$queueStep) * static::$queueStep;
         foreach (static::$cacheQueueName as $name => $time) {
-            if ($time < $t) {
+            if ($time < $currStepTime) {
                 unset(static::$cacheQueueName[$name], static::$bufferData[$name]);
             }
         }
         if ($worker_id == 0) {
-            $t = time();
             //达到时间清理
-            if (date('ymdG', $t) == static::$nextClearFlag) {
-                Log::DEBUG('data_clear_on_hour : exptime<' . $t);
+            if (date('ymdG', $now) == static::$nextClearFlag) {
+                Log::DEBUG('data_clear_on_hour : exptime<' . $now);
                 //更新下次清理标识
-                static::$nextClearFlag = date('ymd', $t + 86400) . (string)GetC('data_clear_on_hour', 10);
-
+                static::$nextClearFlag = date('ymd', $now + 86400) . (string)GetC('data_clear_on_hour', 10);
                 //清理过期数据
-                $expList = db()->query('select name from '. MQLib::MQ_LIST_TABLE .' where exptime<' . $t, true);
+                $expList = db()->query('select name from '. MQLib::MQ_LIST_TABLE .' where exptime<' . $now, true);
                 foreach ($expList as $item) {
                     db()->execute('DROP TABLE IF EXISTS ' . MQLib::QUEUE_TABLE_PREFIX . $item['name']);
                 }
-                db()->del(MQLib::MQ_LIST_TABLE, 'exptime<' . $t);
+                db()->del(MQLib::MQ_LIST_TABLE, 'exptime<' . $now);
             }
         }
     }
@@ -302,10 +314,11 @@ class MQServer
                 while ($item = db()->fetch_array($res)) {
                     static::$retry->add($item['id'], $item['ctime'], $item['queue_str']);
                     $last_id = $item['id'];
+                    $retryNum ++;
                 }
                 static::$retry->afterAdd();
-                $retryNum += 500;
             }
+            Log::write('init-retry: load ' . $retryNum . ', retry_count ' . static::$retry->getCount() . ', table_count ' . $count);
         }
         //Log::write((string)static::$retry);
         //清空重试持久缓存表
@@ -348,8 +361,10 @@ class MQServer
         $file = SrvBase::$instance->runDir . '/' . SrvBase::$instance->serverName() . '.info';
         if (!is_file($file)) {
             static::$infoStats = [
+                'date' => date("Y-m-d H:i:s"),
                 'queue_count' => 0,
                 'handle_count' => 0,
+                'fail_count' => 0,
                 'delay_count' => 0,
             ];
         } else {
@@ -357,6 +372,7 @@ class MQServer
         }
         static::$infoStats = array_merge(static::$infoStats, [
             'retry_count' => 0,
+            'per_fail_num' => 0,
             'real_recv_num' => 0,
             'real_pop_num' => 0,
             'real_push_num' => 0,
@@ -371,10 +387,19 @@ class MQServer
      * @param bool $flush
      */
     public static function infoTick($flush = false){
+        static $last_time = 0;
+        if ((static::$tickTime - $last_time) >= 60) { //每60秒统计
+            static::$perFailNum = 0;
+            $last_time = static::$tickTime;
+        }
+        static::$perFailNum += static::$failCount;
+        static::$infoStats['date'] = date("Y-m-d H:i:s", static::$tickTime);
         static::$infoStats['queue_count'] += static::$queueCount;
         static::$infoStats['handle_count'] += static::$handleCount;
+        static::$infoStats['fail_count'] += static::$failCount;
         static::$infoStats['delay_count'] += static::$delayCount; //延迟总数
         static::$infoStats['retry_count'] = static::$retry->getCount();
+        static::$infoStats['per_fail_num'] = static::$perFailNum;
         static::$infoStats['real_recv_num'] = static::$realRecvNum;
         static::$infoStats['real_pop_num'] = static::$realPopNum;
         static::$infoStats['real_push_num'] = static::$realPushNum;
@@ -394,10 +419,15 @@ class MQServer
                 static::$infoStats['topic_list'][$topic] = $num;
             }
         }
+        //预警
+        MQLib::alarm(MQLib::ALARM_WAITING, static::$infoStats['waiting_num']);
+        MQLib::alarm(MQLib::ALARM_RETRY, static::$infoStats['retry_count']);
+        MQLib::alarm(MQLib::ALARM_FAIL, static::$infoStats['per_fail_num']);
 
         static::$queueCount = 0;
         static::$handleCount = 0;
         static::$delayCount = 0;
+        static::$failCount = 0;
         static::$realPopNum = 0;
         static::$realPushNum = 0;
         static::$realRecvNum = 0;
@@ -443,7 +473,8 @@ class MQServer
 
         // 延迟入列|重试入列|更新mq最后使用id数据|更新队列数据的状态
         $worker->tick(1000, function () use($worker_id) {
-            static $lastTime;
+            static $lastTime = 0;
+            static::$tickTime = time();
             //信息统计
             static::infoTick(date("s") == '59');
 
@@ -458,9 +489,9 @@ class MQServer
 
             //重置|更新last_id
             if (!$lastTime) {
-                $lastTime = time();
+                $lastTime = static::$tickTime;
             } else {
-                $time = time();
+                $time = static::$tickTime;
                 if (($time - $lastTime) >= static::$queueStep) {
                     $lastTime = $time;
                     static::$cacheQueueUpdate = [];
@@ -484,6 +515,7 @@ class MQServer
      */
     public static function onWorkerStop($worker, $worker_id)
     {
+        static::$tickTime = time();
         //1 进程结束时把缓存的数据写入到磁盘
         static::writeToDisk();
         //2 更新队列数据的状态
@@ -725,16 +757,19 @@ class MQServer
     {
         $queueName = $data['queueName'] ?? '';
         $id = $data['id'] ?? 0;
-        $status = $data['status'] ?? 1;
+        $status = isset($data['status']) ? (int)$data['status'] : 1;
         if (strlen((string)$id) != 19) return; //id固定长度19位
+        if ($status === MQLib::STATUS_FAIL || $status === MQLib::STATUS_TODO) {
+            static::$failCount++;
+        }
 
         if ($queueName == '') { //延迟的取name不正确
             $time = (int)substr((string)$id, 0, 10);
             $step = MQLib::queueStep();
             $queueName = date('mdHi', (int)floor($time / $step) * $step);;
         }
+
         static::$retry->clean($id);
-        //static::setStatus($queueName, $id, $status, $result);
         $result = $data['result'] ?? '';
         $data = ['status' => $status];
         if ($result!=='') $data['result'] = $result;
