@@ -287,9 +287,9 @@ class MQServer
 
                     $queue_str = $r['name'] . ',' . $item['id'] . ',' . $item['ack'] . ',' . $item['retry'] . ',' . $item['data'];
                     if ($item['ctime'] <= $time) {
-                        if ($item['ctime'] > $item['mtime']) static::$delayCount--;
                         static::$queueData[$item['topic']]->enqueue($queue_str);
                     } else {
+                        static::$delayCount++;
                         static::$delay->add($item['topic'], $item['ctime'], $queue_str);
                     }
                     $count++;
@@ -300,6 +300,12 @@ class MQServer
                 db()->update(['last_id' => $up_last_id], MQLib::MQ_LIST_TABLE, ['name' => $r['name']]);
             }
             Log::write('init: ' . $r['name'] . '->' . $r['last_id'] . '<-' . $last_id . ', count:' . $count);
+        }
+
+        //初始统计延迟数
+        $tables = db()->all(MQLib::MQ_LIST_TABLE, 'ctime>=' . static::$next2StepTime . ' and last_id=0', 'ctime asc', 'name');
+        foreach ($tables as $r) {
+            static::$delayCount += db()->getCount(MQLib::QUEUE_TABLE_PREFIX . $r['name']);
         }
     }
     //初始重试数据
@@ -397,7 +403,7 @@ class MQServer
         static::$infoStats['queue_count'] += static::$queueCount;
         static::$infoStats['handle_count'] += static::$handleCount;
         static::$infoStats['fail_count'] += static::$failCount;
-        static::$infoStats['delay_count'] += static::$delayCount; //延迟总数
+        static::$infoStats['delay_count'] = static::$delayCount; //延迟总数
         static::$infoStats['retry_count'] = static::$retry->getCount();
         static::$infoStats['per_fail_num'] = static::$perFailNum;
         static::$infoStats['real_recv_num'] = static::$realRecvNum;
@@ -426,7 +432,7 @@ class MQServer
 
         static::$queueCount = 0;
         static::$handleCount = 0;
-        static::$delayCount = 0;
+        //static::$delayCount = 0;
         static::$failCount = 0;
         static::$realPopNum = 0;
         static::$realPushNum = 0;

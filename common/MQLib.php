@@ -190,7 +190,7 @@ class MQLib
             $alarmCheck($value, static::$alarmFail, $time_fail, $alarm);
         }
         if ($alarm) {
-            Log::write($type . ' -> ' . $value, 'alarm');
+            Log::write('alarm '. $type . ' -> ' . $value);
             call_user_func(static::$onAlarm, $type, $value);
         }
     }
