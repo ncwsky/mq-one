@@ -181,10 +181,11 @@ class MQServer
                         db()->update($item, MQLib::QUEUE_TABLE_PREFIX . $queueName, 'id=' . $id);
                     }
                     db()->commit();
+                    static::$cacheQueueUpdate[$queueName] = [];
                 } catch (\Exception $e) {
-                    Log::write($e->getMessage(), 'fail');
+                    db()->rollBack();
+                    Log::write($e, 'fail');
                 }
-                static::$cacheQueueUpdate[$queueName] = [];
             }
         }
     }
@@ -192,21 +193,26 @@ class MQServer
     protected static function toMqListLastId($isStop=false){
         //更新mq最后使用id数据
         db()->beginTrans();
-        foreach (static::$cacheMqListLastId as $queueName => $last_id) {
-            db()->update(['last_id' => $last_id], MQLib::MQ_LIST_TABLE, ['name' => $queueName, 'last_id<' . $last_id]);
-            unset(static::$cacheMqListLastId[$queueName]);
-        }
-        if ($isStop) {
-            list($minId, $minQueueName) = static::$delay->stop2minId();
-            $nearQueueName = date('mdHi', static::$next2StepTime - 2 * static::$queueStep);
-            $currQueueName = date('mdHi', (int)floor(time() / static::$queueStep) * static::$queueStep);
-            Log::write($nearQueueName . ' - ' . $currQueueName);
-            if ($minQueueName == $currQueueName && $minId > 0) {
-                Log::write($minId . ' - ' . $minQueueName, 'delayMinId');
-                db()->update(['last_id' => $minId], MQLib::MQ_LIST_TABLE, ['name' => $minQueueName]);
+        try {
+            foreach (static::$cacheMqListLastId as $queueName => $last_id) {
+                db()->update(['last_id' => $last_id], MQLib::MQ_LIST_TABLE, ['name' => $queueName, 'last_id<' . $last_id]);
             }
+            if ($isStop) {
+                list($minId, $minQueueName) = static::$delay->stop2minId();
+                $nearQueueName = date('mdHi', static::$next2StepTime - 2 * static::$queueStep);
+                $currQueueName = date('mdHi', (int)floor(time() / static::$queueStep) * static::$queueStep);
+                Log::write($nearQueueName . ' - ' . $currQueueName);
+                if ($minQueueName == $currQueueName && $minId > 0) {
+                    Log::write($minId . ' - ' . $minQueueName, 'delayMinId');
+                    db()->update(['last_id' => $minId], MQLib::MQ_LIST_TABLE, ['name' => $minQueueName]);
+                }
+            }
+            db()->commit();
+            static::$cacheMqListLastId = [];
+        } catch (Exception $e) {
+            db()->rollBack();
+            Log::ERROR($e);
         }
-        db()->commit();
     }
     /**
      * 间隔时段定时 移除无用的缓存队列名|下下间隔时段的延迟数据|过期数据清理  todo 优化
@@ -218,16 +224,19 @@ class MQServer
         $nextQueueName = date('mdHi', static::$next2StepTime);
         //下下间隔时段的延迟数据  调整了$queueStep的值  旧的延迟数据将无法读取
         $r = db()->find(MQLib::MQ_LIST_TABLE, "name='".$nextQueueName."'", '', 'name,last_id,end_id');
-        $last_id = 0;
-        while ($last_id < $r['end_id']){
-            $res = db()->query('select id,ctime,topic,retry,ack,data from ' . MQLib::QUEUE_TABLE_PREFIX . $nextQueueName . ' where id>' . $last_id . ' order by id asc limit 500');
-            static::$delay->beforeAdd();
-            while ($item = db()->fetch_array($res)) {
-                $queue_str = $r['name'] . ',' . $item['id'] . ',' . $item['ack'] . ',' . $item['retry'] . ',' . $item['data'];
-                static::$delay->add($item['topic'], $item['ctime'], $queue_str);
-                $last_id = $item['id'];
+        Log::write('延迟数据载入 nextQueueName:' . $nextQueueName . ', end_id:' . ($r ? $r['end_id'] : 'none'));
+        if ($r) {
+            $last_id = 0;
+            while ($last_id < $r['end_id']) {
+                $res = db()->query('select id,ctime,topic,retry,ack,data from ' . MQLib::QUEUE_TABLE_PREFIX . $nextQueueName . ' where id>' . $last_id . ' order by id asc limit 500');
+                static::$delay->beforeAdd();
+                while ($item = db()->fetch_array($res)) {
+                    $queue_str = $r['name'] . ',' . $item['id'] . ',' . $item['ack'] . ',' . $item['retry'] . ',' . $item['data'];
+                    static::$delay->add($item['topic'], $item['ctime'], $queue_str);
+                    $last_id = $item['id'];
+                }
+                static::$delay->afterAdd();
             }
-            static::$delay->afterAdd();
         }
         //更新下下次时段
         static::$next2StepTime += static::$queueStep;
@@ -242,7 +251,7 @@ class MQServer
         if ($worker_id == 0) {
             //达到时间清理
             if (date('ymdG', $now) == static::$nextClearFlag) {
-                Log::DEBUG('data_clear_on_hour : exptime<' . $now);
+                Log::write('data_clear_on_hour '.static::$nextClearFlag.' : exptime<' . $now);
                 //更新下次清理标识
                 static::$nextClearFlag = date('ymd', $now + 86400) . (string)GetC('data_clear_on_hour', 10);
                 //清理过期数据
@@ -336,28 +345,33 @@ class MQServer
         if(!$retryList) return; //无重试缓存
 
         $time = time();
-        db()->beginTrans();
-        $retryStmt = db()->prepare('INSERT INTO '.MQLib::QUEUE_RETRY_TABLE.'(id,ctime,queue_str) VALUES (?, ?, ?)');
-        $n=0;
-        foreach ($retryList as $id){
-            $package_str = static::$retry->getData($id);
-            if (!$package_str) { //数据可能被清除
-                continue;
-            }
-            //$topic, $queueName, $id, $ack, $retry, $data
-            list($topic, , $id, , $retry, ) = explode(',', $package_str, 6);
-            list(, $retry_step) = explode('-', $retry, 2); //$retry, $retry_step
-            $ctime = $time + MQLib::getRetryStep($topic, $retry_step);
+        try {
+            db()->beginTrans();
+            $retryStmt = db()->prepare('INSERT INTO '.MQLib::QUEUE_RETRY_TABLE.'(id,ctime,queue_str) VALUES (?, ?, ?)');
+            $n=0;
+            foreach ($retryList as $id){
+                $package_str = static::$retry->getData($id);
+                if (!$package_str) { //数据可能被清除
+                    continue;
+                }
+                //$topic, $queueName, $id, $ack, $retry, $data
+                list($topic, , $id, , $retry, ) = explode(',', $package_str, 6);
+                list(, $retry_step) = explode('-', $retry, 2); //$retry, $retry_step
+                $ctime = $time + MQLib::getRetryStep($topic, $retry_step);
 
-            $retryStmt->execute([$id, $ctime, $package_str]);
-            $n++;
-            if ($n > 1000) {
-                db()->commit();
-                db()->beginTrans();
-                $n = 0;
+                $retryStmt->execute([$id, $ctime, $package_str]);
+                $n++;
+                if ($n > 1000) {
+                    db()->commit();
+                    db()->beginTrans();
+                    $n = 0;
+                }
             }
+            db()->commit();
+        } catch (Exception $e) {
+            db()->rollBack();
+            Log::ERROR($e);
         }
-        db()->commit();
     }
     /**
      * 统计信息 初始
@@ -857,7 +871,8 @@ class MQServer
                 db()->commit();
                 static::$delay->afterAdd();
             } catch (\Exception $e) {
-                Log::write($e->getMessage(), 'fail');
+                db()->rollBack();
+                Log::write($e, 'fail');
             }
         }
         static::$bufferSize = 0;

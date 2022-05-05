@@ -27,7 +27,7 @@ $cfg = array(
     'allow_ip' => '', // 允许ip 优先于auth_key
     'queue_prefix' => '', // 前缀
     'data_expired_day' => 1, //数据过期天数
-    'data_clear_on_hour' => 12, // 数据每日几时（0-23）清理
+    'data_clear_on_hour' => 10, // 数据每日几时（0-23）清理
     'queue_step' => 60, //队列存储间隔 分钟
     'retry_step' => [ // topic=>[重试间隔值,...] 未配置使用全局值
         //'cmd' => [10, 30, 60, 90, 120, 180],
