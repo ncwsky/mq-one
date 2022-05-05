@@ -1,14 +1,11 @@
 <?php
 
-use Workerman\Connection\AsyncTcpConnection;
-
 class MQServer
 {
     use MQMsg;
 
     // 注意mysql:max_allowed_packet,innodb_log_buffer_size
-    public static $maxBufferSize = 512000; //最大数据缓存大小 0.5M
-    public static $maxBufferNum = 1000;
+    public static $maxBufferSize = 1024000; //最大数据缓存大小 1M
 
     /**
      * 信息统计
@@ -70,7 +67,6 @@ class MQServer
      * @var int
      */
     protected static $bufferSize = 0;
-    protected static $bufferNum = 0;
 
     /**
      * @var DelayPHP|DelayInterface
@@ -214,12 +210,8 @@ class MQServer
             Log::ERROR($e);
         }
     }
-    /**
-     * 间隔时段定时 移除无用的缓存队列名|下下间隔时段的延迟数据|过期数据清理  todo 优化
-     * @param $worker_id
-     * @throws Exception
-     */
-    protected static function toQueueStep($worker_id){
+    //下下间隔时段的延迟数据
+    protected static function toDelayLoad(){
         //延迟数据入缓存
         $nextQueueName = date('mdHi', static::$next2StepTime);
         //下下间隔时段的延迟数据  调整了$queueStep的值  旧的延迟数据将无法读取
@@ -240,6 +232,16 @@ class MQServer
         }
         //更新下下次时段
         static::$next2StepTime += static::$queueStep;
+    }
+    /**
+     * 间隔时段定时 移除无用的缓存队列名|过期数据清理  todo 优化
+     * @param $worker_id
+     * @throws Exception
+     */
+    protected static function toQueueStep($worker_id){
+        Log::write('toQueueStep tickTime:'.static::$tickTime);
+        Log::write('cache queue name:'. json_encode(array_keys(static::$cacheQueueName)));
+        Log::write('buffer keys:'. json_encode(array_keys(static::$bufferData)));
 
         $now = static::$tickTime; //time();
         $currStepTime = (int)floor($now / static::$queueStep) * static::$queueStep;
@@ -249,8 +251,10 @@ class MQServer
             }
         }
         if ($worker_id == 0) {
+            $ymdG = date('ymdG', $now);
+            Log::write('是否达到时间清理 '. $ymdG .'=='. static::$nextClearFlag);
             //达到时间清理
-            if (date('ymdG', $now) == static::$nextClearFlag) {
+            if ($ymdG == static::$nextClearFlag) {
                 Log::write('data_clear_on_hour '.static::$nextClearFlag.' : exptime<' . $now);
                 //更新下次清理标识
                 static::$nextClearFlag = date('ymd', $now + 86400) . (string)GetC('data_clear_on_hour', 10);
@@ -260,6 +264,7 @@ class MQServer
                     db()->execute('DROP TABLE IF EXISTS ' . MQLib::QUEUE_TABLE_PREFIX . $item['name']);
                 }
                 db()->del(MQLib::MQ_LIST_TABLE, 'exptime<' . $now);
+                Log::write('clear count:'. count($expList));
             }
         }
     }
@@ -373,13 +378,11 @@ class MQServer
             Log::ERROR($e);
         }
     }
-    /**
-     * 统计信息 初始
-     */
-    protected static function initInfo()
+    //统计信息 初始
+    protected static function initInfo($reset=false)
     {
         $file = SrvBase::$instance->runDir . '/' . SrvBase::$instance->serverName() . '.info';
-        if (!is_file($file)) {
+        if ($reset || !is_file($file)) {
             static::$infoStats = [
                 'date' => date("Y-m-d H:i:s"),
                 'queue_count' => 0,
@@ -515,7 +518,10 @@ class MQServer
                 if (($time - $lastTime) >= static::$queueStep) {
                     $lastTime = $time;
                     static::$cacheQueueUpdate = [];
+                    //更新mq最后使用id数据
                     static::toMqListLastId();
+                    //延迟数据载入
+                    static::toDelayLoad();
                     //间隔时段 移除无用的缓存队列名|下下间隔时段的延迟数据|过期数据清理  todo 优化
                     static::toQueueStep($worker_id);
                 }
@@ -604,7 +610,10 @@ class MQServer
                 static::ack($data);
                 break;
             case 'stats':
-                $ret = static::stats();
+                $ret = static::$infoStats;
+                break;
+            case 'reset_stats':
+                static::initInfo(true);
                 break;
             default:
                 self::err('invalid cmd');
@@ -704,11 +713,10 @@ class MQServer
         }
 
         $queueName = static::queueName($ctime);
-        static::$bufferNum++;
         static::$bufferSize += $data['len'];
         static::$queueCount++;
         static::$bufferData[$queueName]->enqueue($queueData);
-        if ($sync && static::$bufferSize > static::$maxBufferSize || static::$bufferNum > static::$maxBufferNum) {
+        if ($sync && static::$bufferSize > static::$maxBufferSize) {
             static::writeToDisk();
         }
         return [$queueData['id'], $queueName];
@@ -757,7 +765,7 @@ class MQServer
                 $retry_step = (int)$retry_step;
             }
             $retry = (int)$retry;
-            if ($retry > $retry_step) { //进程结束会记录到持久缓存表 意外关机
+            if ($retry > $retry_step) { //进程结束会记录到持久缓存表 意外关机除外
                 static::$retry->add($id, $time + MQLib::getRetryStep($topic, $retry_step), $topic . ',' . $queueName . ',' . $id . ',' . $ack . ',' . $retry.'-'.($retry_step+1) . ',' . $data, $retry_step);
             }
 
@@ -794,11 +802,6 @@ class MQServer
         $data = ['status' => $status];
         if ($result!=='') $data['result'] = $result;
         static::queueUpdate($queueName, $id, $data);
-    }
-
-    protected static function stats()
-    {
-        return static::$infoStats;
     }
 
     protected static function checkTopic(&$topic)
@@ -876,6 +879,5 @@ class MQServer
             }
         }
         static::$bufferSize = 0;
-        static::$bufferNum = 0;
     }
 }
