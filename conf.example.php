@@ -23,9 +23,11 @@ $cfg = array(
     'log_size' => 4194304,// 日志文件大小限制
     'log_level' => 1,// 日志记录等级
     // ----- message queue start -----
+    'memory_limit'=>'512M', //内存限制 大量队列堆积会造成内存不足 需要调整限制
     'auth_key' => '', // tcp认证key
     'allow_ip' => '', // 允许ip 优先于auth_key
-    'queue_prefix' => '', // 前缀
+    'prefix' => '', // 前缀
+    'allow_waiting_num' => 50000, //允许等待队列数 0不限制 超出此值新推送的消息将会丢弃并返回失败
     'data_expired_day' => 1, //数据过期天数
     'data_clear_on_hour' => 10, // 数据每日几时（0-23）清理
     'queue_step' => 60, //队列存储间隔 分钟

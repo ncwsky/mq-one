@@ -181,6 +181,7 @@ class MQServer
                 } catch (\Exception $e) {
                     db()->rollBack();
                     Log::write($e, 'fail');
+                    MQLib::alarm(MQLib::ALARM_FAIL, '队列数据的状态失败:'.$e->getMessage());
                 }
             }
         }
@@ -207,7 +208,8 @@ class MQServer
             static::$cacheMqListLastId = [];
         } catch (Exception $e) {
             db()->rollBack();
-            Log::ERROR($e);
+            Log::write($e,'fail');
+            MQLib::alarm(MQLib::ALARM_FAIL, '更新mq最后使用id数据失败:'.$e->getMessage());
         }
     }
     //下下间隔时段的延迟数据
@@ -218,16 +220,21 @@ class MQServer
         $r = db()->find(MQLib::MQ_LIST_TABLE, "name='".$nextQueueName."'", '', 'name,last_id,end_id');
         Log::write('延迟数据载入 nextQueueName:' . $nextQueueName . ', end_id:' . ($r ? $r['end_id'] : 'none'));
         if ($r) {
-            $last_id = 0;
-            while ($last_id < $r['end_id']) {
-                $res = db()->query('select id,ctime,topic,retry,ack,data from ' . MQLib::QUEUE_TABLE_PREFIX . $nextQueueName . ' where id>' . $last_id . ' order by id asc limit 500');
-                static::$delay->beforeAdd();
-                while ($item = db()->fetch_array($res)) {
-                    $queue_str = $r['name'] . ',' . $item['id'] . ',' . $item['ack'] . ',' . $item['retry'] . ',' . $item['data'];
-                    static::$delay->add($item['topic'], $item['ctime'], $queue_str);
-                    $last_id = $item['id'];
+            try{
+                $last_id = 0;
+                while ($last_id < $r['end_id']) {
+                    $res = db()->query('select id,ctime,topic,retry,ack,data from ' . MQLib::QUEUE_TABLE_PREFIX . $nextQueueName . ' where id>' . $last_id . ' order by id asc limit 100');
+                    static::$delay->beforeAdd();
+                    while ($item = db()->fetch_array($res)) {
+                        $queue_str = $r['name'] . ',' . $item['id'] . ',' . $item['ack'] . ',' . $item['retry'] . ',' . $item['data'];
+                        static::$delay->add($item['topic'], $item['ctime'], $queue_str);
+                        $last_id = $item['id'];
+                    }
+                    static::$delay->afterAdd();
                 }
-                static::$delay->afterAdd();
+            } catch (Exception $e){
+                Log::write($e, 'fail');
+                MQLib::alarm(MQLib::ALARM_FAIL, '延迟数据载入失败:'.$e->getMessage());
             }
         }
         //更新下下次时段
@@ -321,6 +328,7 @@ class MQServer
         foreach ($tables as $r) {
             static::$delayCount += db()->getCount(MQLib::QUEUE_TABLE_PREFIX . $r['name']);
         }
+        Log::write('init: $delayCount ' . static::$delayCount);
     }
     //初始重试数据
     protected static function initRetry(){
@@ -330,7 +338,7 @@ class MQServer
             $last_id = 0;
             while ($retryNum < $count) {
                 static::$retry->beforeAdd();
-                $res = db()->query('select id,ctime,queue_str from ' . MQLib::QUEUE_RETRY_TABLE . ' where id>' . $last_id . ' order by id asc limit 500');
+                $res = db()->query('select id,ctime,queue_str from ' . MQLib::QUEUE_RETRY_TABLE . ' where id>' . $last_id . ' order by id asc limit 100');
                 while ($item = db()->fetch_array($res)) {
                     static::$retry->add($item['id'], $item['ctime'], $item['queue_str']);
                     $last_id = $item['id'];
@@ -375,7 +383,8 @@ class MQServer
             db()->commit();
         } catch (Exception $e) {
             db()->rollBack();
-            Log::ERROR($e);
+            Log::write($e, 'fail');
+            MQLib::alarm(MQLib::ALARM_FAIL, '重试数据落盘存储失败:'.$e->getMessage());
         }
     }
     //统计信息 初始
@@ -466,7 +475,7 @@ class MQServer
      */
     public static function onWorkerStart($worker, $worker_id)
     {
-        ini_set('memory_limit', '512M');
+        ini_set('memory_limit', GetC('memory_limit', '512M'));
         MQLib::initConf();
         static::$queueStep = MQLib::queueStep();
         $time = time();
@@ -662,6 +671,11 @@ class MQServer
             }
             static::$queueData[$data['topic']]->enqueue($data['queueName'] . ',' . $data['id'] . ',' . $data['ack'] . ',' . $data['retry'] . ',' . $data['data']);
             return [$data['id'], $data['queueName']];
+        }
+
+        //允许等待队列数
+        if (MQLib::$allowWaitingNum > 0 && !empty(static::$infoStats['waiting_num']) && MQLib::$allowWaitingNum < static::$infoStats['waiting_num']) {
+            return [0, 'waiting mq is full'];
         }
 
         $ctime = $t = time();
@@ -876,6 +890,7 @@ class MQServer
             } catch (\Exception $e) {
                 db()->rollBack();
                 Log::write($e, 'fail');
+                MQLib::alarm(MQLib::ALARM_FAIL, '数据写入磁盘失败:'.$e->getMessage());
             }
         }
         static::$bufferSize = 0;

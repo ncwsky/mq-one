@@ -26,7 +26,7 @@ class RetryPHP implements RetryInterface
 
     public function __toString()
     {
-        return json_encode(['hash' => $this->hash, 'list' => $this->list]);
+        return json_encode(['hash' => count($this->hash), 'list' => count($this->list)]);
     }
 
     public function getCount(){

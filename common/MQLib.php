@@ -60,6 +60,7 @@ class MQLib
     public static $authKey = '';
     public static $allowIp = '';
     public static $isSqlite = false;
+    public static $allowWaitingNum = 0;
 
     protected static $alarmInterval = 0;
     protected static $alarmWaiting = 0;
@@ -146,7 +147,8 @@ class MQLib
      */
     public static function initConf()
     {
-        static::$prefix = GetC('queue_prefix', '');
+        static::$prefix = GetC('prefix', '');
+        static::$allowWaitingNum = GetC('allow_waiting_num', 0);
         static::$allowIp = GetC('allow_ip');
         static::$authKey = GetC('auth_key');
         static::$isSqlite = GetC('db.dbms')=='sqlite';
