@@ -28,9 +28,9 @@ $cfg = array(
     'allow_ip' => '', // 允许ip 优先于auth_key
     'prefix' => '', // 前缀
     'allow_waiting_num' => 50000, //允许等待队列数 0不限制 超出此值新推送的消息将会丢弃并返回失败
-    'data_expired_day' => 1, //数据过期天数
-    'data_clear_on_hour' => 10, // 数据每日几时（0-23）清理
+    'data_expired' => 1440, //数据过期分钟 至少是queue_step的3倍以上 并且要大于重试合计总时长
     'queue_step' => 60, //队列存储间隔 分钟
+    'topic_multi_split' => "\r", //多个同topic push/pop消息分隔符
     'retry_step' => [ // topic=>[重试间隔值,...] 未配置使用全局值
         //'cmd' => [10, 30, 60, 90, 120, 180],
     ],
@@ -43,6 +43,7 @@ $cfg = array(
     'alarm_callback' => function ($type, $value) { // type:waiting|retry|fail, value:对应的触发值
         //todo
         SrvBase::safeEcho($type . ' -> ' . $value . PHP_EOL);
+        Log::write($type . ' -> ' . $value, 'alarm');
     },
     // ----- message queue end -----
 );

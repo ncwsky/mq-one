@@ -26,6 +26,7 @@ defined('MQ_NAME') || define('MQ_NAME', 'MyMQ');
 defined('MQ_LISTEN') || define('MQ_LISTEN', '0.0.0.0');
 defined('MQ_PORT') || define('MQ_PORT', 55011);
 defined('IS_SWOOLE') || define('IS_SWOOLE', 0);
+defined('STOP_TIMEOUT') || define('STOP_TIMEOUT', 10); //进程结束超时时间 秒
 
 require VENDOR_DIR . '/autoload.php';
 require MY_PHP_DIR . '/GetOpt.php';
@@ -134,6 +135,7 @@ if ($isSwoole) {
     $srv = new SwooleSrv($conf);
 } else {
     $srv = new WorkerManSrv($conf);
+    Worker2::$stopTimeout = STOP_TIMEOUT; //强制进程结束等待时间
 }
 
 $srv->run($argv);

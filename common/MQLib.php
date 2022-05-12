@@ -12,6 +12,7 @@ class MQLib
     const STATUS_ACK = 1;
     const STATUS_SYNC = 2;
 
+    const STATUS_CANCEL = -2;
     const STATUS_FAIL = -1;
     const STATUS_TODO = 0;
     const STATUS_DONE = 1;
@@ -59,8 +60,6 @@ class MQLib
     public static $prefix = '';
     public static $authKey = '';
     public static $allowIp = '';
-    public static $isSqlite = false;
-    public static $allowWaitingNum = 0;
 
     protected static $alarmInterval = 0;
     protected static $alarmWaiting = 0;
@@ -148,10 +147,9 @@ class MQLib
     public static function initConf()
     {
         static::$prefix = GetC('prefix', '');
-        static::$allowWaitingNum = GetC('allow_waiting_num', 0);
         static::$allowIp = GetC('allow_ip');
         static::$authKey = GetC('auth_key');
-        static::$isSqlite = GetC('db.dbms')=='sqlite';
+
         static::$alarmInterval = (int)GetC('alarm_interval', 60);
         static::$alarmWaiting = GetC('alarm_waiting');
         static::$alarmRetry = GetC('alarm_retry');
@@ -162,7 +160,6 @@ class MQLib
         } elseif (max(static::$alarmWaiting, static::$alarmRetry, static::$alarmFail) <= 0) {
             static::$onAlarm = null;
         }
-        static::queueStep();
         static::retryStep();
         static::maxRetry();
     }
@@ -179,7 +176,12 @@ class MQLib
         static $time_waiting = 0, $time_retry = 0, $time_fail = 0;
         $alarm = false;
         $alarmCheck = function (&$value, &$alarmValue, &$time, &$alarm) {
-            if ($alarmValue > 0 && $value >= $alarmValue && (MQServer::$tickTime - $time) >= static::$alarmInterval) {
+            if (is_int($value)) {
+                if ($alarmValue > 0 && $value >= $alarmValue && (MQServer::$tickTime - $time) >= static::$alarmInterval) {
+                    $time = MQServer::$tickTime;
+                    $alarm = true;
+                }
+            } elseif ((MQServer::$tickTime - $time) >= static::$alarmInterval) {
                 $time = MQServer::$tickTime;
                 $alarm = true;
             }
@@ -192,23 +194,9 @@ class MQLib
             $alarmCheck($value, static::$alarmFail, $time_fail, $alarm);
         }
         if ($alarm) {
-            Log::write('alarm '. $type . ' -> ' . $value);
+            Log::NOTICE('alarm '. $type . ' -> ' . $value);
             call_user_func(static::$onAlarm, $type, $value);
         }
-    }
-
-    //队列存储间隔 秒
-    public static function queueStep()
-    {
-        static $queueStep;
-        if (!$queueStep) {
-            $queueStep = GetC('queue_step', 60);
-            if (!in_array($queueStep, static::$allowQueueStep)) {
-                $queueStep = 1440;
-            }
-            $queueStep *= 60;
-        }
-        return $queueStep;
     }
 
     /**
@@ -239,7 +227,7 @@ class MQLib
     public static function getRetryStep($topic, $step = 0)
     {
         $steps = static::retryStep($topic);
-        return $steps[$step] ?? end($steps);
+        return $steps[$step] ?? 0;
     }
 
     /**

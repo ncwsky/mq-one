@@ -21,16 +21,32 @@ class RetryPHP implements RetryInterface
         $this->timeStep = array_keys($timeStep);
         $this->timeStepNum = count($this->timeStep);
         sort($this->timeStep);
-        Log::write($this->timeStep, 'retry-php');
+        //初始重试列表
+        for ($i = 0; $i <= $this->timeStepNum; $i++) {
+            $this->list[$i] = [];
+        }
+
+        Log::write($this->timeStepNum.' -> '.json_encode($this->timeStep).'|'.json_encode($this->list), 'retry-php');
     }
 
     public function __toString()
     {
+        if (count($this->hash) <= 200) {
+            return json_encode(['hash' => $this->hash, 'list' => $this->list]);
+        }
         return json_encode(['hash' => count($this->hash), 'list' => count($this->list)]);
     }
 
     public function getCount(){
         return count($this->hash);
+    }
+
+    public function stats(){
+        $counts = [];
+        foreach ($this->list as $step=>$items){
+            $counts[$step] = count($items);
+        }
+        return ['count'=>array_sum($counts), 'list'=>$counts, 'hash_count'=>count($this->hash)];
     }
 
     /**
@@ -42,12 +58,14 @@ class RetryPHP implements RetryInterface
         //重试入列
         //$now = time();
         for ($retry_step = 1; $retry_step <= $this->timeStepNum; $retry_step++) {
+            SrvBase::$isConsole && SrvBase::safeEcho('retry tick -> retry_step:'.$retry_step.', count:'.(isset($this->list[$retry_step])? count($this->list[$retry_step]):'null') .PHP_EOL);
+            //file_put_contents(SrvBase::$instance->runDir . '/' . SrvBase::$instance->serverName() . '.retry', (string)$this);
             if(empty($this->list[$retry_step])) continue;
             foreach ($this->list[$retry_step] as $id => $time) {
                 if ($time > MQServer::$tickTime) break;
                 $count++;
 
-                //"$topic,$queueName,$id,$ack,$retry-$retry_step,$data"
+                //"$retryTime,$topic,$queueName,$id,$ack,$retry-$retry_step,$data"
                 $package_str = $this->getData($id); //
                 if (!$package_str) { //数据可能被清除
                     unset($this->hash[$id], $this->list[$retry_step][$id]);
@@ -55,7 +73,7 @@ class RetryPHP implements RetryInterface
                     continue;
                 }
 
-                list($topic, $queueName, $id, $ack, $retry, $data) = explode(',', $package_str, 6);
+                list(, $topic, $queueName, $id, $ack, $retry, $data) = explode(',', $package_str, 7);
                 $push = [
                     'id'=>$id,
                     'topic'=>$topic,
@@ -85,13 +103,15 @@ class RetryPHP implements RetryInterface
      */
     public function add($id, $time, $data, $retry_step=null){
         if($retry_step===null){
-            list(, , , , $retry,) = explode(',', $data, 6);
+            list(, , , , , $retry,) = explode(',', $data, 7);
             list(, $retry_step) = explode('-', $retry, 2);
+            $retry_step = (int)$retry_step;
         }
         $this->hash[$id] = [$retry_step, $data];
-        if (!isset($this->list[$retry_step])) {
+/*        if (!isset($this->list[$retry_step])) {
             $this->list[$retry_step] = [];
-        }
+            SrvBase::safeEcho('retry_step : '.$retry_step.PHP_EOL);
+        }*/
         $this->list[$retry_step][$id] = $time;
     }
 
@@ -124,9 +144,9 @@ class RetryPHP implements RetryInterface
      * @param bool $retry 是否重试清除
      */
     public function clean($id, $retry = false){
-        Log::DEBUG("<- " . ($retry ? 'Retry' : 'Recv') . " PUBACK package, id:$id");
+        //Log::DEBUG("<- " . ($retry ? 'Retry' : 'Recv') . " PUBACK package, id:$id");
         if (SrvBase::$isConsole) {
-            SrvBase::safeEcho(date("Y-m-d H:i:s")." <- " . ($retry ? 'Retry' : 'Recv') . " PUBACK package, id:$id" . PHP_EOL);
+            //SrvBase::safeEcho(date("Y-m-d H:i:s")." <- " . ($retry ? 'Retry' : 'Recv') . " PUBACK package, id:$id" . PHP_EOL);
         }
         if (isset($this->hash[$id])) {
             $retry_step = $this->hash[$id][0];

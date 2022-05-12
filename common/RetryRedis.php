@@ -36,7 +36,7 @@ class RetryRedis implements RetryInterface
         $count = count($items);
         $this->redis->retries = 1;
         foreach ($items as $id) {
-            //"$topic,$queueName,$id,$ack,$retry-$retry_step,$data"
+            //"$retryTime,$topic,$queueName,$id,$ack,$retry-$retry_step,$data"
             $package_str = $this->getData($id); //
             if (!$package_str) { //数据可能被清除
                 $this->redis->zRem(MQLib::$prefix . MQLib::QUEUE_RETRY_LIST, $id);
@@ -45,7 +45,7 @@ class RetryRedis implements RetryInterface
                 continue;
             }
 
-            list($topic, $queueName, $id, $ack, $retry, $data) = explode(',', $package_str, 6);
+            list(, $topic, $queueName, $id, $ack, $retry, $data) = explode(',', $package_str, 7);
             $push = [
                 'id'=>$id,
                 'topic'=>$topic,
@@ -102,9 +102,9 @@ class RetryRedis implements RetryInterface
      * @param bool $retry 是否重试清除
      */
     public function clean($id, $retry = false){
-        Log::DEBUG("<- " . ($retry ? 'Retry' : 'Recv') . " PUBACK package, id:$id");
+        //Log::DEBUG("<- " . ($retry ? 'Retry' : 'Recv') . " PUBACK package, id:$id");
         if (SrvBase::$isConsole) {
-            SrvBase::safeEcho(date("Y-m-d H:i:s")." <- " . ($retry ? 'Retry' : 'Recv') . " PUBACK package, id:$id" . PHP_EOL);
+            //SrvBase::safeEcho(date("Y-m-d H:i:s")." <- " . ($retry ? 'Retry' : 'Recv') . " PUBACK package, id:$id" . PHP_EOL);
         }
         if ($this->redis->hExists(MQLib::$prefix . MQLib::QUEUE_RETRY_HASH, $id)) {
             $this->redis->zRem(MQLib::$prefix . MQLib::QUEUE_RETRY_LIST, $id);
