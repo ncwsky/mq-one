@@ -5,6 +5,8 @@ declare(strict_types=1);
 require __DIR__ . '/conf.php';
 require __DIR__ . '/../myphp/base.php';
 
+$cmd = empty($argv[1]) ? '' : $argv[1];
+
 $client = TcpClient::instance('', '192.168.0.245:55011');
 //$client->type = 'udp';
 $client->onInput = function ($buffer) {
@@ -19,6 +21,7 @@ $client->onDecode = function ($buffer) {
     //$buffer = rtrim($buffer, "\n");
     return substr($buffer, 6);
 };
+$cmd && $client->send('cmd='.$cmd);
 while (1) {
     try {
         $client->send('cmd=stats');

@@ -7,6 +7,43 @@ require __DIR__ . '/../myphp/base.php';
 $testCount = empty($argv[1]) ? 0 : (int)$argv[1];
 if ($testCount <= 0) $testCount = 0;
 
+
+
+
+/*
+$minId = 0;
+$minQueueName = '';
+$delayedList = (array)redis()->keys(MQLib::$prefix . MQLib::QUEUE_DELAYED . '*');
+foreach ($delayedList as $delayed) {
+    $arr = redis()->zRange($delayed, 0, -1); //, 'WITHSCORES'
+    if($arr){
+        foreach ($arr as $item){
+            list($queueName, $id, $ack, $retry, $data) = explode(',', $item, 5);
+            if($minId==0 || $minId>$id) {
+                $minId = $id;
+                $minQueueName = $queueName;
+            }
+        }
+    }
+
+    $items = redis()->ZRANGEBYSCORE($delayed, '-inf', '+inf');
+    if ($items) {
+        var_dump($items);
+        foreach ($items as $item){
+            list($queueName, $id, $ack, $retry, $data) = explode(',', $item, 5);
+            if($minId==0 || $minId>$id) {
+                $minId = $id;
+                $minQueueName = $queueName;
+            }
+        }
+    }
+}
+var_dump([$minId, $minQueueName]);die();
+*/
+
+
+
+
 $client = TcpClient::instance();
 $client->config('192.168.0.245:55011');
 $client->onInput = function ($buffer) {
@@ -44,8 +81,8 @@ while (1) {
                 $result = '';//implode(PHP_EOL, $output);
                 echo date("Y-m-d H:i:s") . ' handle: ' . $result, PHP_EOL;
                 if (intval($ack) > 0 || intval($retry) > 0) {
-                    $ack_str = 'cmd=ack&id=' . $id . '&queueName=' . $queueName . '&status=1&result=' . $result;
-                    if (mt_rand(0, 9) <= 7) {
+                    $ack_str = 'cmd=ack&id=' . $id . '&queueName=' . $queueName . '&status=' . (mt_rand(0, 9) ? 1 : 0) . '&result=' . $result;
+                    if (mt_rand(0, 9) <= 6) {
                         $client->send($ack_str);
                         $ok = $client->recv();
                         echo date("Y-m-d H:i:s") . ' ack: ' . $ack_str . ' -> ' . $ok, PHP_EOL;
@@ -53,10 +90,12 @@ while (1) {
                 } else {
                     echo date("Y-m-d H:i:s") . ' ack: no', PHP_EOL;
                 }
+            } else{
+                echo date("Y-m-d H:i:s") . ' mq: invalid', PHP_EOL;
             }
         }
     } catch (Exception $e) {
-        echo date("Y-m-d H:i:s") . ' ' . $e->getMessage(), PHP_EOL;
+        echo date("Y-m-d H:i:s") . ' err: ' . $e->getMessage(), PHP_EOL;
         sleep(2);
     }
     if ($testCount && $count >= $testCount) {

@@ -70,20 +70,22 @@ $client->onDecode = function ($buffer) {
     return substr($buffer, 6);
 };
 
+$rand = '~!@#$%^&*_-abcdefghijkmnpqrstuvwxyzABCDEFGHIJKLMNPRSTUVWXYZ0123456789~!@#$%^&*_-abcdefghijkmnpqrstuvwxyzABCDEFGHIJKLMNPRSTUVWXYZ0123456789~!@#$%^&*_-abcdefghijkmnpqrstuvwxyzABCDEFGHIJKLMNPRSTUVWXYZ0123456789~!@#$%^&*_-abcdefghijkmnpqrstuvwxyzABCDEFGHIJKLMNPRSTUVWXYZ0123456789~!@#$%^&*_-abcdefghijkmnpqrstuvwxyzABCDEFGHIJKLMNPRSTUVWXYZ0123456789~!@#$%^&*_-abcdefghijkmnpqrstuvwxyzABCDEFGHIJKLMNPRSTUVWXYZ0123456789~!@#$%^&*_-abcdefghijkmnpqrstuvwxyzABCDEFGHIJKLMNPRSTUVWXYZ0123456789~!@#$%^&*_-abcdefghijkmnpqrstuvwxyzABCDEFGHIJKLMNPRSTUVWXYZ0123456789~!@#$%^&*_-abcdefghijkmnpqrstuvwxyzABCDEFGHIJKLMNPRSTUVWXYZ0123456789~!@#$%^&*_-abcdefghijkmnpqrstuvwxyzABCDEFGHIJKLMNPRSTUVWXYZ0123456789~!@#$%^&*_-abcdefghijkmnpqrstuvwxyzABCDEFGHIJKLMNPRSTUVWXYZ0123456789~!@#$%^&*_-abcdefghijkmnpqrstuvwxyzABCDEFGHIJKLMNPRSTUVWXYZ0123456789~!@#$%^&*_-abcdefghijkmnpqrstuvwxyzABCDEFGHIJKLMNPRSTUVWXYZ0123456789~!@#$%^&*_-abcdefghijkmnpqrstuvwxyzABCDEFGHIJKLMNPRSTUVWXYZ0123456789~!@#$%^&*_-abcdefghijkmnpqrstuvwxyzABCDEFGHIJKLMNPRSTUVWXYZ0123456789~!@#$%^&*_-abcdefghijkmnpqrstuvwxyzABCDEFGHIJKLMNPRSTUVWXYZ0123456789';
 $count = 0;
 while(1){
     $topic = 'cmd';
-    $data = 'php yii mch-order/tm-ymd-report -1';
-    $delay = mt_rand(0, 9) ? 0 : mt_rand(10, 120);
-    $retry = mt_rand(0, 5) ? 0 : mt_rand(1, 7);
-    $ack = mt_rand(0, 9) ? 0 : 1;
-    $rawData = 'topic=cmd&data=' . $data . '&delay=' . $delay . '&retry=' . $retry . '&ack=' . $ack;
+    $data = 'php yii mch-order/tm-ymd-report -1 ' . mt_rand(0, 1000000) . ' ' . $rand;
+    $delay = 0;//mt_rand(0, 9) ? 0 : mt_rand(10, 1200);
+    $retry = mt_rand(0, 9) ? 0 : mt_rand(1, 7);
+    $ack = mt_rand(0, 2) ? 0 : 1;
+    $rawData = 'topic=cmd&data=' . urlencode($data) . '&delay=' . $delay . '&retry=' . $retry . '&ack=' . $ack;
     try {
         if ($client->send($rawData)) {
             $count++;
         }
         $ret = $client->recv();
-        //echo $ret, PHP_EOL;
+        echo $ret, PHP_EOL;
+        usleep(mt_rand(100, 10000)); //模拟处理时间
     } catch (Exception $e) {
         echo $e->getMessage(), PHP_EOL;
         sleep(1);
