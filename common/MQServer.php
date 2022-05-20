@@ -35,6 +35,8 @@ class MQServer
      * @var int
      */
     protected static $queueCount = 0;
+    protected static $waitingCount = 0;
+
     /**
      * 处理数
      * @var int
@@ -137,15 +139,9 @@ class MQServer
      */
     protected static $isWaitingFull = false;
     /**
-     * 用于记录队列满待处理的起始id
-     * @var array [time, id, queueName]
+     * 用于记录队列满待处理的起始id, 截止id
+     * static::$infoStats['full_info'] = [startTime, startId, endTime, endId]
      */
-    protected static $queueWaitingFullStartId = [];
-    /**
-     * 用于记录队列满待处理的截止id
-     * @var array [time, id, queueName]
-     */
-    protected static $queueWaitingFullEndId = [];
 
     /**
      * @var int 定时每秒的时间
@@ -327,6 +323,7 @@ class MQServer
                     $queue_str = $r['name'] . ',' . $item['id'] . ',' . $item['ack'] . ',' . $item['retry'] . ',' . $item['data'];
                     if ($item['ctime'] <= $time) {
                         static::$queueData[$item['topic']]->enqueue($queue_str);
+                        static::$waitingCount++;
                     } else {
                         static::$delayCount++;
                         static::$delay->add($item['topic'], $item['ctime'], $queue_str);
@@ -439,66 +436,58 @@ class MQServer
     }
     //载入队列超限后待处理的数据
     protected static function fullToWaiting($num){
-        //static::$queueWaitingFullStartId = [$ctime, $queueData['id'], $queueName];
-        //static::$queueWaitingFullEndId = [$ctime, $queueData['id'], $queueName];
-        Log::write(['full load '.$num, static::$queueWaitingFullStartId, static::$queueWaitingFullEndId]);
-
         $time = time();
-        //$currQueueName = static::queueName($time);
         $stepTime = floor($time / static::$queueStep) * static::$queueStep;
         $nextStepTime = $stepTime + static::$queueStep;
         static::$next2StepTime = $nextStepTime + static::$queueStep;
 
-        list($startTime, $startId, $startName) = static::$queueWaitingFullStartId;
-        list($endTime, $endId, $endName) = static::$queueWaitingFullEndId;
+        list($startTime, $startId, $endTime, $endId) = static::$infoStats['full_info'];
         $startTime = floor($startTime / static::$queueStep) * static::$queueStep;
 
-        $last_queue_name = '';
-        $last_ctime = 0;
         //初始队列满时待处理数据
         $tables = db()->all(MQLib::MQ_LIST_TABLE, 'ctime>=' . $startTime . ' and ctime<' . $endTime . ' and end_id>last_id', 'ctime asc', 'name,last_id,end_id');
         foreach ($tables as $k=>$r) {
-            $r['last_id'] = $k == 0 ? $startId : 0;
-            $last_id = $r['last_id'];
-            $last_queue_name = $r['name'];
-            $up_last_id = 0; //因延迟数据 last_id 更正
             $count = 0;
-            while ($last_id < $r['end_id']) {
-                $res = db()->query('select id,ctime,mtime,status,topic,retry,ack,data from ' . MQLib::QUEUE_TABLE_PREFIX . $r['name'] . ' where id>=' . $last_id . ' order by id asc limit 200');
+            while(1){ // 无 $startId==$endId 会死循环
+                $res = db()->query('select id,ctime,mtime,status,topic,retry,ack,data from ' . MQLib::QUEUE_TABLE_PREFIX . $r['name'] . ' where id>' . $startId . ' and id<='. $endId .' order by id asc limit 200');
+                if (!$res) break;
                 static::$delay->beforeAdd();
                 while ($item = db()->fetch_array($res)) {
-                    if($num==0 || $last_id==$endId){
-                        break;
-                    }
-                    $last_id = $item['id'];
-                    if (!isset(static::$queueData[$item['topic']])) {
-                        static::$queueData[$item['topic']] = new SplQueue();
-                    }
+                    $startId = $item['id'];
+                    $startTime = $item['ctime'];
 
+                    if (!empty($item['status'])) continue;
+                    if (!isset(static::$queueData[$item['topic']])) static::$queueData[$item['topic']] = new SplQueue();
+                    $item['ctime'] = (int)$item['ctime'];
                     $queue_str = $r['name'] . ',' . $item['id'] . ',' . $item['ack'] . ',' . $item['retry'] . ',' . $item['data'];
                     if ($item['ctime'] <= $time) {
                         static::$queueData[$item['topic']]->enqueue($queue_str);
+                        static::$waitingCount++;
                     } else {
                         static::$delayCount++;
                         static::$delay->add($item['topic'], $item['ctime'], $queue_str);
                     }
-                    $last_ctime = $item['ctime'];
                     $count++;
                     $num--;
+                    if($num==0 || $startId==$endId) break;
                 }
                 static::$delay->afterAdd();
-                if ($num == 0 || $last_id==$endId) {
-                    break;
-                }
+                if($num==0 || $startId==$endId) break;
             }
-            Log::write('full -> load: ' . $r['name'] . '->' . $r['last_id'] . '<-' . $last_id . ', count:' . $count);
-            if($last_id==$endId){
-                static::$isWaitingFull = false;
-                Log::write('full -> done: ' . $r['name'] . '->' . $r['last_id'] . '<-' . $last_id . ', count:' . $count . ', endId:' . $endId . ', endName:' . $endName);
+            Log::write('full -> load: ' . $r['name'] . '>' . $startId . ', <=' . $endId . ', count:' . $count);
+            if($num == 0 || $startId==$endId){
+                if($startId==$endId){
+                    static::$isWaitingFull = false;
+                    unset(static::$infoStats['full_info']);
+                    Log::write('full -> done');
+                }
                 break;
             }
         }
-        static::$queueWaitingFullStartId = [$last_ctime, $last_id, $last_queue_name];
+        if (static::$isWaitingFull) {
+            static::$infoStats['full_info'][0] = $startTime;
+            static::$infoStats['full_info'][1] = $startId;
+        }
     }
 
     /**
@@ -523,20 +512,14 @@ class MQServer
         static::$infoStats['real_pop_num'] = static::$realPopNum;
         static::$infoStats['real_push_num'] = static::$realPushNum;
         static::$infoStats['waiting_delay_num'] = static::$delay->waitingCount(); //最近时段待处理的延迟
-        static::$infoStats['waiting_num'] = 0;
+        static::$infoStats['waiting_num'] = static::$waitingCount;
         static::$infoStats['topic_count'] = 0;
         static::$infoStats['topic_list'] = [];
 
         //待处理数量
         static::$infoStats['topic_count'] = count(static::$queueData);
         foreach (static::$queueData as $topic => $queue) {
-            $num = $queue->count();
-            static::$infoStats['waiting_num'] += $num;
-            if (isset(static::$infoStats['topic_queue'][$topic])) {
-                static::$infoStats['topic_list'][$topic] += $num;
-            } else {
-                static::$infoStats['topic_list'][$topic] = $num;
-            }
+            static::$infoStats['topic_list'][$topic] = $queue->count();
         }
         //预警
         MQLib::alarm(MQLib::ALARM_WAITING, static::$infoStats['waiting_num']);
@@ -617,9 +600,8 @@ class MQServer
             static::toQueueUpdate();
 
             //满
-            if (static::$isWaitingFull && static::$maxWaitingNum > static::$infoStats['waiting_num']) {
-                $maxNum = static::$maxWaitingNum-static::$infoStats['waiting_num'];
-                static::fullToWaiting($maxNum);
+            if (static::$isWaitingFull && static::$maxWaitingNum > static::$waitingCount) {
+                static::fullToWaiting(static::$maxWaitingNum-static::$waitingCount);
             }
 
             //重置|更新last_id
@@ -781,12 +763,14 @@ class MQServer
                 $data['retry'] = $ack ? $maxRetry : 0;
             }
             static::$queueData[$data['topic']]->enqueue($data['queueName'] . ',' . $data['id'] . ',' . $data['ack'] . ',' . $data['retry'] . ',' . $data['data']);
+            static::$waitingCount++;
             return [$data['id'], $data['queueName']];
         }
 /*
         //允许等待队列数
-        if (MQLib::$maxWaitingNum > 0 && !empty(static::$infoStats['waiting_num']) && MQLib::$maxWaitingNum < static::$infoStats['waiting_num']) {
-            return [0, 'waiting mq is full'];
+        if (!static::$isWaitingFull && static::$maxWaitingNum > 0 && static::$maxWaitingNum < static::$waitingCount) {
+            static::$isWaitingFull = true;
+            //return [0, 'waiting mq is full'];
         }*/
 
         $ctime = $t = time();
@@ -804,6 +788,7 @@ class MQServer
             'id' => MQLib::bigId($worker_id),
             'ctime' => $ctime,
             'mtime' => $t,
+            'status'=> 0,
             'retry' => 0,
             'ack' => $ack,
             'seq_id' => 0,
@@ -842,13 +827,6 @@ class MQServer
         static::$queueCount++;
         static::$bufferData[$queueName]->enqueue($queueData);
 
-        //允许等待队列数
-        if (static::$maxWaitingNum > 0 && !static::$isWaitingFull && !empty(static::$infoStats['waiting_num']) && static::$maxWaitingNum < static::$infoStats['waiting_num']) {
-            static::$isWaitingFull = true;
-            static::$queueWaitingFullStartId = [$ctime, $queueData['id'], $queueName];
-            //return [0, 'waiting mq is full'];
-        }
-
         if ($sync && static::$bufferSize > static::$maxBufferSize) {
             static::writeToDisk();
         }
@@ -883,6 +861,7 @@ class MQServer
         $time = time();
         while (!static::$queueData[$topic]->isEmpty()) {
             $package_str = static::$queueData[$topic]->dequeue();
+            static::$waitingCount--;
             list($queueName, $id, $ack, $retry, $data) = explode(',', $package_str, 5); //[$queueName, $id, $ack, $retry, $data]
             //todo 延迟取消 判断处理
             static::$realPopNum++;
@@ -980,6 +959,7 @@ class MQServer
     protected static function writeToDisk()
     {
         if (static::$bufferSize == 0) return;
+
         $time = time();
         foreach (static::$bufferData as $queueName => $queue) {
             db()->beginTrans();
@@ -994,15 +974,25 @@ class MQServer
                     $n++;
                     $queue_str = $queueName . ',' . $item['id'] . ',' . $item['ack'] . ',' . $item['retry'] . ',' . $item['data'];
 
-                    if (static::$isWaitingFull) {
-                        static::$queueWaitingFullEndId = [$item['ctime'], $item['id'], $queueName];
+                    //允许等待队列数
+                    if (!static::$isWaitingFull && static::$maxWaitingNum > 0 && static::$maxWaitingNum == static::$waitingCount) {
+                        static::$isWaitingFull = true;
+                    }
+
+                    if (isset(static::$infoStats['full_info'])) {
+                        static::$infoStats['full_info'][2] = $item['ctime'];
+                        static::$infoStats['full_info'][3] = $item['id'];
                     } else {
+                        //队列满起始
+                        static::$isWaitingFull && static::$infoStats['full_info'] = [$item['ctime'], $item['id']];
+
                         //推送数据
                         if ($item['ctime'] <= $time) {
                             static::$queueData[$item['topic']]->enqueue($queue_str);
+                            static::$waitingCount++;
                         } else {
                             static::$delayCount++;
-                            if ($item['ctime'] <= static::$next2StepTime) { //延时在一间隔时间段内的 直接加入缓存 超过定时定时读入缓存
+                            if ($item['ctime'] < static::$next2StepTime) { //延时在一间隔时间段内的直接加入缓存 超过定时读入缓存
                                 static::$delay->add($item['topic'], $item['ctime'], $queue_str);
                             }
                         }
@@ -1010,7 +1000,7 @@ class MQServer
 
                     $data[] = $item;
                     $endId = $item['id'];
-                    if ($n > 9) {
+                    if ($n > 49) {
                         db()->add($data, $tableName);
                         $n = 0;
                         $data = [];
