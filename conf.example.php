@@ -12,6 +12,10 @@ $cfg = array(
         'dbms' => 'sqlite', //数据库
         'name' => __DIR__.'/mq.db',
     ],
+    'db3'=>[
+        //'dbms' => 'mem',
+        //无存储 仅内存版
+    ],
     'redis' => array(
         'host' => '127.0.0.1',
         'port' => 6379,

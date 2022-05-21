@@ -128,6 +128,7 @@ class MQServer
      */
     protected static $next2StepTime = 0;
 
+    protected static $isMem = false;
     protected static $isSqlite = false;
     protected static $topicMultiSplit = "\r";
     protected static $maxWaitingNum = 0;
@@ -167,6 +168,7 @@ class MQServer
         if (isset(static::$cacheQueueName[$name])) return $name;
         static::$cacheQueueName[$name] = $time;
         static::$bufferData[$name] = new SplQueue();
+        if (static::$isMem) return $name;
 
         $tableName = MQLib::QUEUE_TABLE_PREFIX . $name;
         if (static::$isSqlite) {
@@ -191,6 +193,10 @@ class MQServer
 
     //更新队列数据的状态
     protected static function toQueueUpdate(){
+        if (static::$isMem) {
+            static::$cacheQueueUpdate = [];
+            return;
+        }
         foreach (static::$cacheQueueUpdate as $queueName => $items) {
             if ($items) {
                 db()->beginTrans();
@@ -210,6 +216,10 @@ class MQServer
     }
     //更新mq最后使用id数据
     protected static function toMqListLastId($isStop=false){
+        if (static::$isMem){
+            static::$cacheMqListLastId = [];
+            return;
+        }
         //更新mq最后使用id数据
         db()->beginTrans();
         try {
@@ -234,6 +244,7 @@ class MQServer
     }
     //下下间隔时段的延迟数据
     protected static function toDelayLoad(){
+        if (static::$isMem) return;
         //延迟数据入缓存
         $nextQueueName = date('mdHi', static::$next2StepTime);
         //下下间隔时段的延迟数据  调整了$queueStep的值  旧的延迟数据将无法读取
@@ -277,6 +288,7 @@ class MQServer
                 unset(static::$cacheQueueName[$name], static::$bufferData[$name]);
             }
         }
+        if (static::$isMem) return;
         if ($worker_id == 0) {
             //达到时间清理
             if ($now >= static::$nextClearFlag) {
@@ -295,6 +307,7 @@ class MQServer
     }
     //初始队列
     protected static function initQueue(){
+        if (static::$isMem) return;
         $time = time();
         $stepTime = static::stepTime($time);
         //初始缓存所有队列表名
@@ -361,6 +374,7 @@ class MQServer
 
     //初始重试数据
     protected static function initRetry(){
+        if (static::$isMem) return;
         $retryNum = static::$retry->getCount(); //缓存中有记录 不执行载入处理
         if ($retryNum == 0) {
             $count = db()->getCount(MQLib::QUEUE_RETRY_TABLE);
@@ -383,6 +397,7 @@ class MQServer
     }
     //重试缓存数据落盘存储便于下次启动使用
     protected static function toRetrySave(){
+        if (static::$isMem) return;
         $retryList = static::$retry->getIdList();
         $retryCount = count($retryList);
         Log::write('toRetrySave count:' . $retryCount);
@@ -514,7 +529,8 @@ class MQServer
         static::$next2StepTime = $nextStepTime + static::$queueStep;
         static::$nextClearFlag = $time;
         static::$tickTime = $time;
-        static::$isSqlite = GetC('db.dbms')=='sqlite';
+        static::$isMem = !GetC('db.name');
+        static::$isSqlite = GetC('db.dbms') == 'sqlite';
         //static::$maxWaitingNum = GetC('max_waiting_num', 0);
         static::$dataExpired = intval(GetC('data_expired', 1440) * 60);
         static::$topicMultiSplit = GetC('topic_multi_split', "\r");
@@ -897,6 +913,7 @@ class MQServer
      */
     public static function queueUpdate($queueName, $id, $data)
     {
+        if (static::$isMem) return;
         if (!isset(static::$cacheQueueUpdate[$queueName])) {
             static::$cacheQueueUpdate[$queueName] = [];
         }
@@ -914,8 +931,30 @@ class MQServer
     protected static function writeToDisk()
     {
         if (static::$bufferSize == 0) return;
-
         $time = time();
+        if(static::$isMem){
+            foreach (static::$bufferData as $queueName => $queue) {
+                try {
+                    static::$delay->beforeAdd();
+                    while(!$queue->isEmpty()){
+                        $item = $queue->dequeue();
+                        $queue_str = $queueName . ',' . $item['id'] . ',' . $item['ack'] . ',' . $item['retry'] . ',' . $item['data'];
+                        //推送数据
+                        if ($item['ctime'] <= $time) {
+                            static::$queueData[$item['topic']]->enqueue($queue_str);
+                            static::$waitingCount++;
+                        } else {
+                            static::$delayCount++;
+                            static::$delay->add($item['topic'], $item['ctime'], $queue_str);
+                        }
+                    }
+                    static::$delay->afterAdd();
+                } catch (\Exception $e) {
+                    MQLib::alarm(MQLib::ALARM_FAIL, '数据入列失败:'.$e->getMessage());
+                }
+            }
+            return;
+        }
         foreach (static::$bufferData as $queueName => $queue) {
             db()->beginTrans();
             try {
