@@ -531,7 +531,7 @@ class MQServer
         static::$tickTime = $time;
         static::$isMem = !GetC('db.name');
         static::$isSqlite = GetC('db.dbms') == 'sqlite';
-        //static::$maxWaitingNum = GetC('max_waiting_num', 0);
+        static::$maxWaitingNum = GetC('max_waiting_num', 0);
         static::$dataExpired = intval(GetC('data_expired', 1440) * 60);
         static::$topicMultiSplit = GetC('topic_multi_split', "\r");
         static::$delayClass = GetC('delay_class', DelayPHP::class);
@@ -737,12 +737,11 @@ class MQServer
             static::$waitingCount++;
             return [$data['id'], $data['queueName']];
         }
-/*
+
         //允许等待队列数
-        if (!static::$isWaitingFull && static::$maxWaitingNum > 0 && static::$maxWaitingNum < static::$waitingCount) {
-            static::$isWaitingFull = true;
-            //return [0, 'waiting mq is full'];
-        }*/
+        if (static::$maxWaitingNum > 0 && static::$maxWaitingNum < static::$waitingCount) {
+            return [0, 'waiting mq is full'];
+        }
 
         $ctime = $t = time();
         $sync = 0;
