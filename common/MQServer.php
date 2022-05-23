@@ -130,7 +130,8 @@ class MQServer
 
     protected static $isMem = false;
     protected static $isSqlite = false;
-    protected static $topicMultiSplit = "\r";
+    protected static $allowTopicList;
+    protected static $multiSplit = "\r";
     protected static $maxWaitingNum = 0;
     protected static $dataExpired = 0;
 
@@ -273,10 +274,9 @@ class MQServer
     }
     /**
      * 间隔时段定时 移除无用的缓存队列名|过期数据清理  todo 优化
-     * @param $worker_id
      * @throws Exception
      */
-    protected static function toQueueStep($worker_id){
+    protected static function toQueueStep(){
         Log::write('toQueueStep tickTime:'.static::$tickTime);
         Log::write('cache queue name:'. json_encode(array_keys(static::$cacheQueueName)));
         Log::write('buffer keys:'. json_encode(array_keys(static::$bufferData)));
@@ -289,20 +289,19 @@ class MQServer
             }
         }
         if (static::$isMem) return;
-        if ($worker_id == 0) {
-            //达到时间清理
-            if ($now >= static::$nextClearFlag) {
-                Log::write('clear , nextClearFlag '.static::$nextClearFlag.' : exptime<' . $now);
-                //更新下次清理标识
-                static::$nextClearFlag = $now + static::$dataExpired;
-                //清理过期数据
-                $expList = db()->query('select name from '. MQLib::MQ_LIST_TABLE .' where exptime<' . $now, true);
-                foreach ($expList as $item) {
-                    db()->execute('DROP TABLE IF EXISTS ' . MQLib::QUEUE_TABLE_PREFIX . $item['name']);
-                }
-                db()->del(MQLib::MQ_LIST_TABLE, 'exptime<' . $now);
-                Log::write('clear count:'. count($expList));
+
+        //达到时间清理
+        if ($now >= static::$nextClearFlag) {
+            Log::write('clear , nextClearFlag '.static::$nextClearFlag.' : exptime<' . $now);
+            //更新下次清理标识
+            static::$nextClearFlag = $now + static::$dataExpired;
+            //清理过期数据
+            $expList = db()->query('select name from '. MQLib::MQ_LIST_TABLE .' where exptime<' . $now, true);
+            foreach ($expList as $item) {
+                db()->execute('DROP TABLE IF EXISTS ' . MQLib::QUEUE_TABLE_PREFIX . $item['name']);
             }
+            db()->del(MQLib::MQ_LIST_TABLE, 'exptime<' . $now);
+            Log::write('clear count:'. count($expList));
         }
     }
     //初始队列
@@ -533,7 +532,10 @@ class MQServer
         static::$isSqlite = GetC('db.dbms') == 'sqlite';
         static::$maxWaitingNum = GetC('max_waiting_num', 0);
         static::$dataExpired = intval(GetC('data_expired', 1440) * 60);
-        static::$topicMultiSplit = GetC('topic_multi_split', "\r");
+        if (GetC('allow_topic_list')) {
+            static::$allowTopicList = array_fill_keys(explode(',', GetC('allow_topic_list')), 1);
+        }
+        static::$multiSplit = GetC('multi_split', "\r");
         static::$delayClass = GetC('delay_class', DelayPHP::class);
         if (empty(static::$delayClass) || !class_exists(static::$delayClass)) {
             static::$delayClass = DelayPHP::class;
@@ -547,7 +549,7 @@ class MQServer
         // 清除redis延迟缓存
         static::$delay->clear();
         //间隔时段 移除无用的缓存队列名|下下间隔时段的延迟数据|过期数据清理
-        static::toQueueStep($worker_id);
+        static::toQueueStep();
 
         //初始统计信息
         static::initInfo();
@@ -557,7 +559,7 @@ class MQServer
         static::initRetry();
 
         // 延迟入列|重试入列|更新mq最后使用id数据|更新队列数据的状态
-        $worker->tick(1000, function () use($worker_id) {
+        $worker->tick(1000, function () {
             static $lastTime = 0;
             static::$tickTime = time();
             //延迟入列
@@ -588,7 +590,7 @@ class MQServer
                     //延迟数据载入
                     static::toDelayLoad();
                     //间隔时段 移除无用的缓存队列名|下下间隔时段的延迟数据|过期数据清理  todo 优化
-                    static::toQueueStep($worker_id);
+                    static::toQueueStep();
                 }
             }
         });
@@ -648,8 +650,22 @@ class MQServer
             return false;
         }
 
-        //todo strpos($recv,'topic_multi_split') 多个消息处理 使用指定分隔符分隔
+        // 批量消息 开头$标识 数据使用指定分隔符分隔
+        if ($recv[0] == '$') {
+            $ret = [];
+            $offset = 1;
+            $len = strlen(static::$multiSplit);
+            while ($pos = strpos($recv, static::$multiSplit, $offset)) {
+                $_recv = substr($recv, $offset, $pos-$offset);
+                $ret[] = static::handle($con, $_recv, $fd);
+                $offset = $pos + $len;
+            }
+            return $ret;
+        }
+        return static::handle($con, $recv, $fd);
+    }
 
+    protected static function handle($con, $recv, $fd=0){
         if ($recv[0] == '{') { // substr($recv, 0, 1) == '{' && substr($recv, -1) == '}'
             $data = json_decode($recv, true);
         } else { // querystring
@@ -662,8 +678,7 @@ class MQServer
         }
         if (!isset($data['cmd'])) $data['cmd'] = 'push';
 
-
-        $ret = 'ok';
+        $ret = 'ok'; //默认返回信息
         switch ($data['cmd']) {
             case 'push': //入列 用于消息重试
                 $data['host'] = MQLib::remoteIp($con, $fd);
@@ -695,21 +710,30 @@ class MQServer
         return $ret;
     }
 
+    /**
+     * @param $data
+     * @return array|bool
+     * @throws Exception
+     */
     public static function push($data){
         static::$realPushNum++;
         if (empty($data['topic']) || empty($data['data'])) {
-            return [0, 'topic or data is empty'];
             static::err('topic or data is empty');
             return false;
         }
         $topic_length = strlen($data['topic']);
         if ($topic_length > MQLib::MAX_TOPIC_LENGTH) {
             $data['topic'] = substr($data['topic'], 0, MQLib::MAX_TOPIC_LENGTH);
-            #return [0, 'topic length[' . $topic_length . '] is too long'];
         }
         $data_length = strlen($data['data']);
         if ($data_length > MQLib::MAX_DATA_LENGTH) {
-            return [0, 'data length[' . $data_length . '] is too long'];
+            static::err('data length[' . $data_length . '] is too long');
+            return false;
+        }
+
+        if (static::$allowTopicList && !isset(static::$allowTopicList[$data['topic']])) {
+            static::err('Invalid topic');
+            return false;
         }
 
         $maxRetry = MQLib::maxRetry($data['topic']);
@@ -740,7 +764,8 @@ class MQServer
 
         //允许等待队列数
         if (static::$maxWaitingNum > 0 && static::$maxWaitingNum < static::$waitingCount) {
-            return [0, 'waiting mq is full'];
+            static::err('waiting mq is full');
+            return false;
         }
 
         $ctime = $t = time();
@@ -781,12 +806,6 @@ class MQServer
         if (!empty($data['sync'])) {
             $sync = MQLib::STATUS_SYNC; //同步落地
         }
-/*
-        $data['status'] = $data['status'] ?? 0;
-        if ($data['status'] > 0) {
-            $queueData['ack'] = $data['status'] & MQLib::STATUS_ACK;
-            $sync = $data['status'] & MQLib::STATUS_SYNC; //同步落地
-        }*/
 
         if (isset($data['seq_id'])) { // todo seq_id相同的只能由同一个消费者处理
             $queueData['seq_id'] = (int)$data['seq_id'];
@@ -840,7 +859,7 @@ class MQServer
                 static::$cacheMqListLastId[$queueName] = $id;
             }
             if ($ret === '') $ret = $package_str;
-            else $ret .= static::$topicMultiSplit . $package_str;
+            else $ret .= static::$multiSplit . $package_str;
 
             //加入重试集合
             $retry_step = 0;

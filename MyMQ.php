@@ -107,7 +107,7 @@ $conf = [
             $ret = MQServer::onReceive($server, $data, $fd);
             $server->send($fd, MQPackN2::encode($ret !== false ? $ret : MQServer::err()));
         },
-        'onPacket' => function (swoole_server $server, $data, $client_info) { //swoole tcp
+        'onPacket' => function (swoole_server $server, $data, $client_info) { //swoole udp
             $data = MQPackN2::decode($data);
             $ret = MQServer::onReceive($server, $data, $client_info);
             $server->sendto($client_info['address'], $client_info['port'], MQPackN2::encode($ret !== false ? $ret : MQServer::err()));

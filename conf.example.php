@@ -28,13 +28,14 @@ $cfg = array(
     'log_level' => 1,// 日志记录等级
     // ----- message queue start -----
     'memory_limit'=>'512M', //内存限制 大量队列堆积会造成内存不足 需要调整限制
-    'auth_key' => '', // tcp认证key
+    'auth_key' => '', // tcp认证key  发送认证 内容:"#"+auth_key
     'allow_ip' => '', // 允许ip 优先于auth_key
     'prefix' => '', // 前缀
     //'max_waiting_num' => 50000, //allow_waiting_num 0不限制 超出此值新推送的消息将会丢弃并返回失败
     'data_expired' => 1440, //数据过期分钟 至少是queue_step的3倍以上 并且要大于重试合计总时长
     'queue_step' => 60, //队列存储间隔 分钟
-    'topic_multi_split' => "\r", //多个同topic push/pop消息分隔符
+    'allow_topic_list'=>'', //允许的topic 使用,分隔 不指定不限制
+    'multi_split' => "\r", //批量消息分隔符 内容："$"+消息+分隔符+消息....
     'retry_step' => [ // topic=>[重试间隔值,...] 未配置使用全局值
         //'cmd' => [10, 30, 60, 90, 120, 180],
     ],
