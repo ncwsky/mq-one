@@ -552,7 +552,7 @@ class MQServer
         static::toQueueStep();
 
         //初始统计信息
-        static::initInfo();
+        static::initInfo(static::$isMem);
         //初始队列
         static::initQueue();
         //初始重试数据
