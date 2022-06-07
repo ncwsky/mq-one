@@ -360,6 +360,8 @@ class TcpClient
                 }
             }, array($this->socket));
         }*/
+        $this->isConnect = true;
+
         if ($this->onConnect) {
             try {
                 call_user_func($this->onConnect, $this);
@@ -369,7 +371,6 @@ class TcpClient
                 static::log($e);
             }
         }
-        $this->isConnect = true;
     }
 
     /**
