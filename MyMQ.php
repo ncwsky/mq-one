@@ -49,7 +49,7 @@ if (GetOpt::has('h', 'help')) {
 
    --help
    -l --listen    监听地址 默认 0.0.0.0
-   -p --port      tcp|udp 端口
+   -p --port      tcp 端口
    -s --swoole    swolle运行', PHP_EOL;
     exit(0);
 }
@@ -62,7 +62,7 @@ $conf = [
     'name' => MQ_NAME, //服务名
     'ip' => $listen,
     'port' => $port,
-    'type' => 'tcp', //类型[tcp udp]
+    'type' => 'tcp',
     'setting' => [ //swooleSrv有兼容处理
         'protocol' => 'MQPackN2',
         'stdoutFile' => RUN_DIR . '/log.log', //终端输出
@@ -97,21 +97,23 @@ $conf = [
             if (!$isSwoole) {
                 $fd = $con->id;
             }
-            MQLib::auth($con, $fd);
+            \SrvBase::$isConsole && SrvBase::safeEcho('onConnect '.$fd.PHP_EOL);
+
+            if(!MQLib::auth($con, $fd)){
+                MQLib::toClose($con, $fd);
+            }
         },
-        'onClose' => function ($con, $fd = 0) {
-            MQLib::auth($con, $fd, null);
+        'onClose' => function ($con, $fd = 0) use ($isSwoole) {
+            if (!$isSwoole) {
+                $fd = $con->id;
+            }
+            MQLib::auth($con, $fd, false);
+            \SrvBase::$isConsole && SrvBase::safeEcho(date("Y-m-d H:i:s ").microtime(true).' onClose '.$fd.PHP_EOL);
         },
         'onReceive' => function (swoole_server $server, int $fd, int $reactor_id, string $data) { //swoole tcp
             $data = MQPackN2::decode($data);
             $ret = MQServer::onReceive($server, $data, $fd);
             $server->send($fd, MQPackN2::encode($ret !== false ? $ret : MQServer::err()));
-        },
-        'onPacket' => function (swoole_server $server, $data, $client_info) { //swoole udp
-            $data = MQPackN2::decode($data);
-            $ret = MQServer::onReceive($server, $data, $client_info);
-            $server->sendto($client_info['address'], $client_info['port'], MQPackN2::encode($ret !== false ? $ret : MQServer::err()));
-            SrvBase::$instance->send($client_info, MQPackN2::encode($ret !== false ? $ret : MQServer::err()));
         },
         'onMessage' => function (\Workerman\Connection\ConnectionInterface $connection, $data) { //workerman
             $fd = $connection->id;

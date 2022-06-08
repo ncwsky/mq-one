@@ -4,7 +4,13 @@ declare(strict_types=1);
 
 require __DIR__ . '/conf.php';
 require __DIR__ . '/../myphp/base.php';
+require __DIR__ . '/../myphp/GetOpt.php';
 
+//解析命令参数
+GetOpt::parse('h:n:', ['host:', 'num:']);
+$testCount = (int)GetOpt::val('n', 'num', 0);
+$host = GetOpt::val('h', 'host', '192.168.0.245:55011');
+if ($testCount <= 0) $testCount = 10000;
 /*
 $queueName = 'message_queue03141800';
 $time = time();
@@ -46,17 +52,16 @@ for ($i = 0; $i < 99998; $i++) {
     }
 }
 var_dump($hasRepeat);*/
-$testCount = empty($argv[1]) ? 0 : (int)$argv[1];
-if ($testCount <= 0) $testCount = 10000;
+
 
 $topic = 'cmd';
 $data = 'php yii mch-order/tm-ymd-report -1';
 
-$rawData = MQPackN2::toEncode('topic=cmd&data='.$data);
+$rawData = MQPackN2::toEncode('cmd=retry_clear');
 //file_put_contents(__DIR__.'/tcp', $rawData);
 
 $client = TcpClient::instance();
-$client->config('192.168.0.245:55011');
+$client->config($host);
 $client->onInput = function ($buffer) {
     //return MQPackN2::toEncode($buffer) . "\n";
     return MQPackN2::input($buffer);
@@ -69,13 +74,18 @@ $client->onDecode = function ($buffer) {
     //$buffer = rtrim($buffer, "\n");
     return substr($buffer, 6);
 };
+//认证
+$client->onConnect = function ($client){
+    //$client->send('123456');
+    //$client->recv();
+};
 
 $rand = '~!@#$%^&*_-abcdefghijkmnpqrstuvwxyzABCDEFGHIJKLMNPRSTUVWXYZ0123456789~!@#$%^&*_-abcdefghijkmnpqrstuvwxyzABCDEFGHIJKLMNPRSTUVWXYZ0123456789~!@#$%^&*_-abcdefghijkmnpqrstuvwxyzABCDEFGHIJKLMNPRSTUVWXYZ0123456789~!@#$%^&*_-abcdefghijkmnpqrstuvwxyzABCDEFGHIJKLMNPRSTUVWXYZ0123456789~!@#$%^&*_-abcdefghijkmnpqrstuvwxyzABCDEFGHIJKLMNPRSTUVWXYZ0123456789~!@#$%^&*_-abcdefghijkmnpqrstuvwxyzABCDEFGHIJKLMNPRSTUVWXYZ0123456789~!@#$%^&*_-abcdefghijkmnpqrstuvwxyzABCDEFGHIJKLMNPRSTUVWXYZ0123456789~!@#$%^&*_-abcdefghijkmnpqrstuvwxyzABCDEFGHIJKLMNPRSTUVWXYZ0123456789~!@#$%^&*_-abcdefghijkmnpqrstuvwxyzABCDEFGHIJKLMNPRSTUVWXYZ0123456789~!@#$%^&*_-abcdefghijkmnpqrstuvwxyzABCDEFGHIJKLMNPRSTUVWXYZ0123456789~!@#$%^&*_-abcdefghijkmnpqrstuvwxyzABCDEFGHIJKLMNPRSTUVWXYZ0123456789~!@#$%^&*_-abcdefghijkmnpqrstuvwxyzABCDEFGHIJKLMNPRSTUVWXYZ0123456789~!@#$%^&*_-abcdefghijkmnpqrstuvwxyzABCDEFGHIJKLMNPRSTUVWXYZ0123456789~!@#$%^&*_-abcdefghijkmnpqrstuvwxyzABCDEFGHIJKLMNPRSTUVWXYZ0123456789~!@#$%^&*_-abcdefghijkmnpqrstuvwxyzABCDEFGHIJKLMNPRSTUVWXYZ0123456789~!@#$%^&*_-abcdefghijkmnpqrstuvwxyzABCDEFGHIJKLMNPRSTUVWXYZ0123456789';
 $count = 0;
 while(1){
     $topic = 'cmd';
     $data = 'php yii mch-order/tm-ymd-report -1 ' . mt_rand(0, 1000000) . ' ' . $rand;
-    $delay = 0;//mt_rand(0, 9) ? 0 : mt_rand(10, 1200);
+    $delay = mt_rand(0, 9) ? 0 : mt_rand(10, 480);
     $retry = mt_rand(0, 9) ? 0 : mt_rand(1, 7);
     $ack = mt_rand(0, 2) ? 0 : 1;
     $rawData = 'topic=cmd&data=' . urlencode($data) . '&delay=' . $delay . '&retry=' . $retry . '&ack=' . $ack;

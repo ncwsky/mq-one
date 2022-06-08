@@ -4,11 +4,21 @@ declare(strict_types=1);
 
 require __DIR__ . '/conf.php';
 require __DIR__ . '/../myphp/base.php';
-$testCount = empty($argv[1]) ? 0 : (int)$argv[1];
+require __DIR__ . '/../myphp/GetOpt.php';
+
+while(1){
+    var_dump(redis()->publish('abc', time()));
+    usleep(10000);
+    var_dump(redis()->publish('ab', date("Y-m-d H:i:s")));
+    sleep(6);
+}
+
+die();
+//解析命令参数
+GetOpt::parse('h:n:', ['host:', 'num:']);
+$testCount = (int)GetOpt::val('n', 'num', 0);
+$host = GetOpt::val('h', 'host', '192.168.0.245:55011');
 if ($testCount <= 0) $testCount = 0;
-
-
-
 
 /*
 $minId = 0;
@@ -77,7 +87,7 @@ while (1) {
                 list($queueName, $id, $ack, $retry, $data) = explode(',', $mq, 5);
                 $output = [];
                 //usleep(mt_rand(100000, 1000000)); //模拟处理时间
-                usleep(mt_rand(100, 10000)); //模拟处理时间
+                //usleep(mt_rand(100, 10000)); //模拟处理时间
                 //exec($data . ' 2>&1', $output, $code); //将标准错误输出重定向到标准输出
                 $result = '';//implode(PHP_EOL, $output);
                 echo date("Y-m-d H:i:s") . ' handle: ' . $result, PHP_EOL;

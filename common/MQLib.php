@@ -262,55 +262,68 @@ class MQLib
      * @param $con
      * @param $fd
      * @param string $recv
-     * @return bool
+     * @return bool|string
      */
-    public static function auth($con, $fd, $recv = false)
+    public static function auth($con, $fd, $recv = null)
     {
         //优先ip
-        if (MQLib::$allowIp) {
-            return Helper::allowIp(static::remoteIp($con, $fd), MQLib::$allowIp);
+        if (static::$allowIp) {
+            return $recv === false || \Helper::allowIp(static::remoteIp($con, $fd), static::$allowIp);
         }
-        if (!MQLib::$authKey || SrvBase::$instance->server->type=='udp') return true; // udp使用ip验证 !$fd || is_array($fd)
+        //认证key
+        if (!static::$authKey) return true;
+
+        if (!isset(\SrvBase::$instance->auth)) {
+            \SrvBase::$instance->auth = [];
+        }
+
+        //连接断开清除
+        if ($recv === false) {
+            unset(\SrvBase::$instance->auth[$fd]);
+            \SrvBase::$isConsole && \SrvBase::safeEcho('clear auth '.$fd);
+            return true;
+        }
 
         if ($recv) {
-            if ($recv[0] == '#') {
-                $key =  substr($recv, 1);
-                if ($key == static::$authKey) { //通过认证
-                    SrvBase::$instance->server->clearTimer(SrvBase::$instance->auth[$fd]);
-                    SrvBase::$instance->auth[$fd] = true;
-                } else {
-                    static::err('auth fail');
-                    return false;
-                }
-            } else {
-                if (!isset(SrvBase::$instance->auth[$fd]) || SrvBase::$instance->auth[$fd] !== true) {
-                    static::err('not auth');
-                    return false;
-                }
+            if (isset(\SrvBase::$instance->auth[$fd]) && \SrvBase::$instance->auth[$fd] === true) {
+                return true;
             }
-            return true;
+            \SrvBase::$instance->server->clearTimer(\SrvBase::$instance->auth[$fd]);
+            if ($recv == static::$authKey) { //通过认证
+                \SrvBase::$instance->auth[$fd] = true;
+            } else {
+                static::err('auth fail');
+                return false;
+            }
+            return 'ok';
         }
 
-        if (!isset(SrvBase::$instance->auth)) {
-            SrvBase::$instance->auth = [];
-        }
-        //连接断开清除
-        if ($recv === null) {
-            unset(SrvBase::$instance->auth[$fd]);
-            return true;
-        }
         //创建定时认证
-        SrvBase::$instance->auth[$fd] = SrvBase::$instance->server->after(1000, function () use ($con, $fd) {
-            unset(SrvBase::$instance->auth[$fd]);
-            SrvBase::safeEcho('to close ' . $fd . PHP_EOL);
-            if (SrvBase::$instance->isWorkerMan) {
-                //$con->send('auth timeout');
-                $con->close();
-            } else {
-                //$con->send($fd, 'auth timeout');
-                $con->close($fd);
-            }
-        });
+        if(!isset(\SrvBase::$instance->auth[$fd])){
+            \SrvBase::$isConsole && \SrvBase::safeEcho('auth timer ' . $fd . PHP_EOL);
+            \SrvBase::$instance->auth[$fd] = \SrvBase::$instance->server->after(1000, function () use ($con, $fd) {
+                unset(\SrvBase::$instance->auth[$fd]);
+                \SrvBase::$isConsole && \SrvBase::safeEcho('auth timeout to close ' . $fd . PHP_EOL);
+                if (\SrvBase::$instance->isWorkerMan) {
+                    $con->close();
+                } else {
+                    $con->close($fd);
+                }
+            });
+        }
         return true;
+    }
+    /**
+     * @param \Workerman\Connection\TcpConnection|\swoole_server $con
+     * @param int $fd
+     * @param string $msg
+     */
+    public static function toClose($con, $fd=0, $msg=null){
+        if (\SrvBase::$instance->isWorkerMan) {
+            $con->close($msg);
+        } else {
+            if ($msg) $con->send($fd, $msg);
+            $con->close($fd);
+        }
     }
 }

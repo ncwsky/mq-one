@@ -636,18 +636,18 @@ class MQServer
     public static function onReceive($con, $recv, $fd=0)
     {
         static::$realRecvNum++;
-        //if (SrvBase::$isConsole) SrvBase::safeEcho($recv . PHP_EOL);
+        \SrvBase::$isConsole && \SrvBase::safeEcho($recv . PHP_EOL);
         Log::trace($recv);
 
         //认证处理
-        if (!MQLib::auth($con, $fd, $recv)) {
-            static::err(MQLib::err());
-            return false;
+        $authRet = MQLib::auth($con, $fd, $recv);
+        if (!$authRet) {
+            //static::err(MQLib::err());
+            MQLib::toClose($con, $fd, MQLib::err());
+            return '';
         }
-
-        if ($recv === '') {
-            static::err('nil');
-            return false;
+        if($authRet==='ok'){
+            return 'ok';
         }
 
         // 批量消息 开头$标识 数据使用指定分隔符分隔

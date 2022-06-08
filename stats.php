@@ -4,11 +4,20 @@ declare(strict_types=1);
 
 require __DIR__ . '/conf.php';
 require __DIR__ . '/../myphp/base.php';
+require __DIR__ . '/../myphp/GetOpt.php';
 
-$cmd = empty($argv[1]) ? '' : $argv[1];
+var_dump(redis()->subscribe('abc','ab'));die();
+while(1){
+    var_dump(redis()->parseResponse());
+    //sleep(1);
+}
+die();
+//解析命令参数
+GetOpt::parse('h:c:', ['host:', 'cmd:']);
+$cmd =GetOpt::val('c', 'cmd');
+$host = GetOpt::val('h', 'host', '192.168.0.245:55011');
 
-$client = TcpClient::instance('', '192.168.0.245:55011');
-//$client->type = 'udp';
+$client = TcpClient::instance('', $host);
 $client->onInput = function ($buffer) {
     //return MQPackN2::toEncode($buffer) . "\n";
     return MQPackN2::input($buffer);
