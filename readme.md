@@ -3,7 +3,9 @@ sqlite.db sqlite数据库模板适合小量使用
 mysql.sql mysql数据库初始sql
 
 ###安装
+    
     mkdir mq
+    cd mq
     
     composer require myphps/mq-one
     
