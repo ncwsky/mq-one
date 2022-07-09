@@ -27,6 +27,7 @@ defined('MQ_LISTEN') || define('MQ_LISTEN', '0.0.0.0');
 defined('MQ_PORT') || define('MQ_PORT', 55011);
 defined('IS_SWOOLE') || define('IS_SWOOLE', 0);
 defined('STOP_TIMEOUT') || define('STOP_TIMEOUT', 10); //进程结束超时时间 秒
+defined('MAX_INPUT_SIZE') || define('MAX_INPUT_SIZE', 65536); //接收包限制大小64k
 
 require VENDOR_DIR . '/autoload.php';
 require MY_PHP_DIR . '/GetOpt.php';
@@ -71,11 +72,14 @@ $conf = [
         'log_level' => 0,
         'open_length_check' => true,
         'package_length_func' => function ($buffer) { //自定义解析长度
-/*            $pos = strpos($buffer, "\n");
+            if (\strlen($buffer) >= MAX_INPUT_SIZE) {
+                return -1; //返回-1，数据错误，底层会自动关闭连接
+            }
+            $pos = strpos($buffer, "\n");
             if ($pos === false) {
                 return 0;
             }
-            return $pos + strlen("\n");*/
+            return $pos + 1;
             if (strlen($buffer) < 6) {
                 return 0;
             }
@@ -136,6 +140,8 @@ $conf = [
 if ($isSwoole) {
     $srv = new SwooleSrv($conf);
 } else {
+    // 设置每个连接接收的数据包最大为64K
+    \Workerman\Connection\TcpConnection::$defaultMaxPackageSize = MAX_INPUT_SIZE;
     $srv = new WorkerManSrv($conf);
     Worker2::$stopTimeout = STOP_TIMEOUT; //强制进程结束等待时间
 }

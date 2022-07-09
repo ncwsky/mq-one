@@ -57,16 +57,13 @@ var_dump([$minId, $minQueueName]);die();
 $client = TcpClient::instance();
 $client->config('192.168.0.245:55011');
 $client->onInput = function ($buffer) {
-    //return MQPackN2::toEncode($buffer) . "\n";
     return MQPackN2::input($buffer);
 };
 $client->onEncode = function ($buffer) {
-    //return MQPackN2::toEncode($buffer) . "\n";
-    return MQPackN2::toEncode($buffer);
+    return MQPackN2::encode($buffer);
 };
 $client->onDecode = function ($buffer) {
-    //$buffer = rtrim($buffer, "\n");
-    return substr($buffer, 6);
+    return MQPackN2::decode($buffer);
 };
 $count = 0;
 while (1) {

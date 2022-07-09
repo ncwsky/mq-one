@@ -127,7 +127,9 @@ class MQServer
      * @var int
      */
     protected static $next2StepTime = 0;
-
+    /**
+     * @var bool 未配置数据库时将使用内存模式
+     */
     protected static $isMem = false;
     protected static $isSqlite = false;
     protected static $allowTopicList;
@@ -918,7 +920,7 @@ class MQServer
 
     protected static function checkTopic(&$topic)
     {
-        if (isset($topic) && strlen($topic) > MQLib::MAX_TOPIC_LENGTH) {
+        if (strlen($topic) > MQLib::MAX_TOPIC_LENGTH) {
             $topic = substr($topic, 0, MQLib::MAX_TOPIC_LENGTH);
         }
     }

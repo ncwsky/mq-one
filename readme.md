@@ -17,3 +17,6 @@ mysql.sql mysql数据库初始sql
     修改 run.php conf.php配置
     运行 ./run.php 
     
+###TODO
+>推模式    
+>追加模拟redis协议 lpop、rpush、llen|lsize、lrange?、subscribe、publish    
