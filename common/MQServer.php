@@ -631,7 +631,7 @@ class MQServer
      * 处理数据
      * @param $con
      * @param string $recv
-     * @param int|array $fd
+     * @param int $fd
      * @return bool|array
      * @throws \Exception
      */

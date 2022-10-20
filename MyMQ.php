@@ -65,6 +65,7 @@ $conf = [
     'port' => $port,
     'type' => 'tcp',
     'setting' => [ //swooleSrv有兼容处理
+        'count' => 1, //单进程模式
         'protocol' => 'MQPackN2',
         'stdoutFile' => RUN_DIR . '/log.log', //终端输出
         'pidFile' => RUN_DIR . '/mq.pid',  //pid_file
@@ -88,7 +89,9 @@ $conf = [
                 return 0;
             }
             return $unpack_data['total_length'];
-        }
+        },
+        'package_max_length'=>MAX_INPUT_SIZE, //64k
+        'max_wait_time'=>STOP_TIMEOUT,
     ],
     'event' => [
         'onWorkerStart' => function ($worker, $worker_id) {
@@ -140,10 +143,9 @@ $conf = [
 if ($isSwoole) {
     $srv = new SwooleSrv($conf);
 } else {
+    Worker2::$stopTimeout = STOP_TIMEOUT; //强制进程结束等待时间
     // 设置每个连接接收的数据包最大为64K
     \Workerman\Connection\TcpConnection::$defaultMaxPackageSize = MAX_INPUT_SIZE;
     $srv = new WorkerManSrv($conf);
-    Worker2::$stopTimeout = STOP_TIMEOUT; //强制进程结束等待时间
 }
-
 $srv->run($argv);

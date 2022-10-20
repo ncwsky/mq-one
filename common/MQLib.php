@@ -251,9 +251,6 @@ class MQLib
     {
         if (SrvBase::$instance->isWorkerMan) return $con->getRemoteIp();
 
-        if (is_array($fd)) { // swoole udp 客户端信息包括address/port/server_socket等多项客户端信息数据
-            return $fd['address'];
-        }
         return $con->getClientInfo($fd)['remote_ip'];
     }
 
