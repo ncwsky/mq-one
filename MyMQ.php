@@ -143,9 +143,9 @@ $conf = [
 if ($isSwoole) {
     $srv = new SwooleSrv($conf);
 } else {
-    Worker2::$stopTimeout = STOP_TIMEOUT; //强制进程结束等待时间
     // 设置每个连接接收的数据包最大为64K
     \Workerman\Connection\TcpConnection::$defaultMaxPackageSize = MAX_INPUT_SIZE;
     $srv = new WorkerManSrv($conf);
+    Worker2::$stopTimeout = STOP_TIMEOUT; //强制进程结束等待时间
 }
 $srv->run($argv);
